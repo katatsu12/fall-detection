@@ -291,78 +291,52 @@ constants there and logic in `index.js`.
 §4 is applied: name, description, permissions, `debug`. Still to do later:
 add `"page/alert"` to `module.page.pages` once that page exists.
 
-### Step 3 — Write the detector (`utils/fall-detector.js`)
+### Step 3 — Write the detector (`utils/fall-detector.js`)  ✅ done
 
-Pure JS, no Zepp imports, so it runs under Node for tests.
+Pure JS, no Zepp imports, so it runs under Node for tests and compiles to
+QuickJS bytecode unchanged (verified with `zeus build`). Public API:
 
 ```js
-const G = 980.665 // cm/s² per g
+import { createFallDetector, replay, PRESETS, STATE, magnitudeG } from '../utils/fall-detector'
 
-export function createFallDetector(opts = {}) {
-  const P = {
-    FREEFALL_G: 0.6, IMPACT_G: 2.5, IMPACT_WINDOW_MS: 600,
-    STILL_DELAY_MS: 1000, STILL_WINDOW_MS: 2000, STILL_VAR_G: 0.15,
-    ANGLE_DEG: 60, USE_ANGLE: false, COOLDOWN_MS: 10000, ...opts,
-  }
-  let state = 'IDLE', tFreefall = 0, tImpact = 0, tCooldownUntil = 0
-  let pre = [], post = []                     // {t, x, y, z, g}
-  const listeners = []
+const d = createFallDetector(PRESETS.normal)   // or { impactG: 2.8, useAngle: true, ... }
 
-  function magnitude(x, y, z) { return Math.sqrt(x*x + y*y + z*z) / G }
-  function stddev(arr) {
-    const m = arr.reduce((a, s) => a + s.g, 0) / arr.length
-    return Math.sqrt(arr.reduce((a, s) => a + (s.g - m) ** 2, 0) / arr.length)
-  }
-  function meanVec(arr) {
-    const n = arr.length
-    return arr.reduce((a, s) => [a[0]+s.x/n, a[1]+s.y/n, a[2]+s.z/n], [0,0,0])
-  }
-  function angleDeg(a, b) {
-    const dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
-    const na = Math.hypot(...a), nb = Math.hypot(...b)
-    return Math.acos(Math.max(-1, Math.min(1, dot / (na*nb || 1)))) * 180 / Math.PI
-  }
+d.push(t, x, y, z)        // t in ms, x/y/z in cm/s²; returns the event when one fires, else null
+d.pushGyro(t, x, y, z)    // optional, dps; only consulted when minGyroDps > 0
+d.onFall(evt => …)        // confirmed falls — returns an unsubscribe fn
+d.onCandidate(c => …)     // every completed evaluation, with c.fall and c.reasons[] — use for tuning
+d.getState()              // 'IDLE' | 'FREEFALL' | 'IMPACT' | 'STILL'
+d.getConfig(); d.reset()
 
-  return {
-    onFall(cb) { listeners.push(cb) },
-    getState() { return state },
-    /** Feed one sample. t = ms timestamp, x/y/z in cm/s². */
-    push(t, x, y, z) {
-      const g = magnitude(x, y, z)
-      const s = { t, x, y, z, g }
-      pre.push(s); while (pre.length && t - pre[0].t > 1500) pre.shift()
-      if (t < tCooldownUntil) return
-
-      switch (state) {
-        case 'IDLE':
-          if (g < P.FREEFALL_G) { state = 'FREEFALL'; tFreefall = t }
-          break
-        case 'FREEFALL':
-          if (g > P.IMPACT_G) { state = 'IMPACT'; tImpact = t; post = [] }
-          else if (t - tFreefall > P.IMPACT_WINDOW_MS) state = 'IDLE'
-          break
-        case 'IMPACT':
-          if (t - tImpact >= P.STILL_DELAY_MS) { state = 'STILL'; post = [] }
-          break
-        case 'STILL': {
-          post.push(s)
-          const elapsed = t - (tImpact + P.STILL_DELAY_MS)
-          if (elapsed < P.STILL_WINDOW_MS) break
-          const still = stddev(post) < P.STILL_VAR_G
-          const angleOk = !P.USE_ANGLE ||
-            angleDeg(meanVec(pre.filter(p => p.t < tFreefall)), meanVec(post)) > P.ANGLE_DEG
-          if (still && angleOk) {
-            tCooldownUntil = t + P.COOLDOWN_MS
-            listeners.forEach(cb => cb({ t: tImpact, peakG: Math.max(...post.map(p => p.g), P.IMPACT_G) }))
-          }
-          state = 'IDLE'
-          break
-        }
-      }
-    },
-  }
-}
+replay(d, samples)        // feed [{dt, x, y, z}, …] and return the events that fired
 ```
+
+Event / candidate payload:
+
+```js
+{ t, freefallMs, peakG, stillStd, angleDeg, gyroPeakDps, samples, fall, reasons }
+// reasons ⊂ ['too_few_samples', 'not_still', 'no_orientation_change', 'no_rotation']
+```
+
+Options (all in `DEFAULTS`): `freefallG 0.6`, `impactG 2.5`, `impactWindowMs 600`,
+`stillDelayMs 1000`, `stillWindowMs 2000`, `stillStdG 0.15`, `minStillSamples 4`,
+`useAngle false`, `angleDeg 60`, `preWindowMs 1500`, `minGyroDps 0`,
+`cooldownMs 10000`. `PRESETS.low / normal / high` map the settings-page
+sensitivity onto `freefallG` / `impactG` / `stillStdG`.
+
+Tests and fixtures:
+
+```bash
+npm test            # node --test — state machine, ADL rejection, presets, angle/gyro gates, fixtures
+npm run fixtures    # regenerates test/fixtures/*.json from test/helpers/synth.js
+```
+
+`test/helpers/synth.js` builds deterministic traces (`rest / freefall / impact /
+motion / spike`) in the same `{dt,x,y,z}` format as device recordings, so
+synthetic fixtures and real ones are interchangeable. `test/fixtures.test.js`
+asserts every `fall_*.json` fires exactly once and every `adl_*.json` never
+does — drop real recordings in with those name prefixes and they're covered
+automatically.
 
 ### Step 4 — Monitoring page (`page/index.js`)
 

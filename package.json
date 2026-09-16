@@ -4,7 +4,8 @@
   "description": "Zepp OS fall detection mini program",
   "main": "app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test \"test/*.test.js\"",
+    "fixtures": "node test/helpers/make-fixtures.js"
   },
   "author": "",
   "license": "ISC",
@@ -13,5 +14,6 @@
   },
   "dependencies": {
     "@zeppos/zml": "0.0.27"
-  }
+  },
+  "type": "module"
 }
