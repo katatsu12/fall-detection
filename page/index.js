@@ -1,11 +1,20 @@
 /**
- * Monitoring page.
+ * Home ("You're covered") — design 2A.
  *
  * Runs the accelerometer in the foreground (Zepp OS forbids it in background
  * services — README §1.2), keeps the page alive, feeds samples to the
  * detector and hands off to page/alert when a fall is confirmed.
+ *
+ * Interaction (the design keeps the screen to a ring and three facts):
+ *   tap the ring         → pause / resume monitoring
+ *   long-press the ring  → replay a synthetic fall (DEBUG only)
+ *   swipe up             → sensitivity settings
+ *
+ * Navigation to/from the alert flow uses replace(), so each page starts
+ * fresh and monitoring restarts via AUTO_START when the flow returns here.
  */
-import { Accelerometer, Wear, FREQ_MODE_NORMAL } from '@zos/sensor'
+import { Accelerometer, Wear, Battery, FREQ_MODE_NORMAL } from '@zos/sensor'
+import { connectStatus } from '@zos/ble'
 import {
   setPageBrightTime,
   resetPageBrightTime,
@@ -13,19 +22,25 @@ import {
   resetDropWristScreenOff,
   setWakeUpRelaunch,
 } from '@zos/display'
-import { push } from '@zos/router'
-import { createWidget, widget, prop, align } from '@zos/ui'
+import { replace, push } from '@zos/router'
+import { onGesture, GESTURE_UP } from '@zos/interaction'
+import { createWidget, widget, prop, align, event } from '@zos/ui'
 import { getText } from '@zos/i18n'
 import { BasePage } from '@zeppos/zml/base-page'
 import * as L from 'zosLoader:./index.[pf].layout.js'
+import { COLOR } from '../utils/theme'
 import { createFallDetector, replay, magnitudeG } from '../utils/fall-detector'
+import { detectorOptions } from '../utils/prefs'
 import { DEMO_FALL } from '../utils/demo-trace'
 
 const AUTO_START = true // start monitoring as soon as the page opens
-const DEBUG = true // show the "Simulate fall" button (mirror app.json "debug")
+const DEBUG = true // long-press the ring to simulate a fall; log sample rate
 const FREQ_MODE = FREQ_MODE_NORMAL // README §8: measure the real Hz per mode and revisit
 const KEEP_BRIGHT_MS = 2147483000 // max accepted by setPageBrightTime
-const UI_REFRESH_MS = 250 // live readout refresh; never touch widgets per sample
+const UI_REFRESH_MS = 1000
+const RATE_LOG_MS = 5000
+const COVERAGE_BUCKET_MS = 5000 // ring = share of 5-second buckets with samples while worn
+const COVERAGE_BUCKETS = 60 // …over the last five minutes
 
 const WEAR_NOT_WORN = 0
 
@@ -37,13 +52,14 @@ Page(
       worn: true,
       accel: null,
       wear: null,
+      battery: null,
       detector: null,
       uiTimer: null,
-      lastG: 1,
-      // sample-rate estimate: samples counted since the previous UI tick
-      samplesSinceTick: 0,
-      lastTickAt: 0,
-      hz: 0,
+      lastSampleAt: 0,
+      samplesSinceLog: 0,
+      lastLogAt: 0,
+      bucket: { startedAt: 0, samples: 0, worn: true },
+      buckets: [],
       widgets: {},
     },
 
@@ -51,49 +67,70 @@ Page(
       // Come back to this page instead of the watch face when the screen wakes.
       setWakeUpRelaunch({ relaunch: true })
 
-      const detector = createFallDetector()
+      const detector = createFallDetector(detectorOptions())
       detector.onCandidate((c) => console.log('[fall-candidate]', JSON.stringify(c)))
       detector.onFall((evt) => this.onFallDetected(evt))
       this.state.detector = detector
+      this.state.battery = new Battery()
     },
 
     build() {
       const w = this.state.widgets
 
-      createWidget(widget.TEXT, {
+      createWidget(widget.ARC, { ...L.RING, end_angle: L.RING_FULL, color: COLOR.track })
+      w.ring = createWidget(widget.ARC, { ...L.RING, end_angle: L.RING_FULL, color: COLOR.green })
+      w.disc = createWidget(widget.BUTTON, {
+        ...L.DISC,
+        normal_color: COLOR.bg,
+        press_color: COLOR.card,
+        click_func: () => this.toggle(),
+        longpress_func: () => DEBUG && this.simulateFall(),
+      })
+      w.shield = createWidget(widget.IMG, { ...L.SHIELD, auto_scale: true })
+      w.shield.addEventListener(event.CLICK_UP, () => this.toggle())
+
+      w.title = createWidget(widget.TEXT, {
         ...L.TITLE,
-        text: getText('title'),
+        text: getText('home.paused'),
+        color: COLOR.text,
         align_h: align.CENTER_H,
         align_v: align.CENTER_V,
       })
-      w.statusDot = createWidget(widget.FILL_RECT, { ...L.STATUS_DOT, color: L.COLOR.muted })
-      w.status = createWidget(widget.TEXT, {
-        ...L.STATUS,
-        text: getText('status.stopped'),
-        color: L.COLOR.text,
-        align_h: align.LEFT,
-        align_v: align.CENTER_V,
-      })
-      w.readout = createWidget(widget.TEXT, {
-        ...L.READOUT,
-        text: '',
-        align_h: align.CENTER_H,
-        align_v: align.CENTER_V,
-      })
-      w.toggle = createWidget(widget.BUTTON, {
-        ...L.TOGGLE_BTN,
-        text: getText('btn.start'),
-        click_func: () => (this.state.running ? this.stopMonitoring() : this.startMonitoring()),
-      })
-      if (DEBUG) {
-        createWidget(widget.BUTTON, {
-          ...L.SIMULATE_BTN,
-          text: getText('btn.simulate'),
-          click_func: () => this.simulateFall(),
+
+      const labels = ['home.last_check', 'home.battery', 'home.phone']
+      w.rows = L.ROWS.map((row, i) => {
+        createWidget(widget.FILL_RECT, { ...row.rect, color: COLOR.card })
+        createWidget(widget.TEXT, {
+          ...row.label,
+          text: getText(labels[i]),
+          color: COLOR.muted,
+          align_h: align.LEFT,
+          align_v: align.CENTER_V,
         })
-      }
+        return createWidget(widget.TEXT, {
+          ...row.value,
+          text: '',
+          color: COLOR.textSoft,
+          align_h: align.RIGHT,
+          align_v: align.CENTER_V,
+        })
+      })
+
+      onGesture((g) => {
+        if (g === GESTURE_UP) {
+          push({ url: 'page/settings' })
+          return true
+        }
+        return false
+      })
 
       if (AUTO_START) this.startMonitoring()
+      this.render()
+    },
+
+    toggle() {
+      if (this.state.running) this.stopMonitoring()
+      else this.startMonitoring()
     },
 
     startMonitoring() {
@@ -105,7 +142,7 @@ Page(
       s.wear.onChange(() => {
         s.worn = s.wear.getStatus() !== WEAR_NOT_WORN
         if (!s.worn) s.detector.reset() // don't carry a half-seen fall across a wear gap
-        this.renderStatus()
+        this.render()
       })
 
       s.accel = new Accelerometer()
@@ -117,11 +154,15 @@ Page(
       setPageBrightTime({ brightTime: KEEP_BRIGHT_MS })
       pauseDropWristScreenOff({ duration: 0 })
 
+      const now = Date.now()
       s.running = true
-      s.samplesSinceTick = 0
-      s.lastTickAt = Date.now()
-      s.uiTimer = setInterval(() => this.renderReadout(), UI_REFRESH_MS)
-      this.renderStatus()
+      s.lastSampleAt = 0
+      s.samplesSinceLog = 0
+      s.lastLogAt = now
+      s.buckets = []
+      s.bucket = { startedAt: now, samples: 0, worn: s.worn }
+      s.uiTimer = setInterval(() => this.tick(), UI_REFRESH_MS)
+      this.render()
     },
 
     stopMonitoring() {
@@ -144,31 +185,90 @@ Page(
         resetDropWristScreenOff()
       }
       s.running = false
-      s.hz = 0
       s.detector.reset()
-      this.renderStatus()
-      this.renderReadout()
+      this.render()
     },
 
     onSample() {
       const s = this.state
       const { x, y, z } = s.accel.getCurrent()
-      s.samplesSinceTick++
-      s.lastG = magnitudeG(x, y, z)
-      if (!s.worn) return
-      s.detector.push(Date.now(), x, y, z)
+      const now = Date.now()
+      s.lastSampleAt = now
+      s.samplesSinceLog++
+      s.bucket.samples++
+      if (!s.worn) {
+        s.bucket.worn = false
+        return
+      }
+      if (DEBUG && s.samplesSinceLog === 1) console.log('[g]', magnitudeG(x, y, z).toFixed(2))
+      s.detector.push(now, x, y, z)
+    },
+
+    /** Once a second: roll the coverage bucket, log the sample rate, refresh the rows. */
+    tick() {
+      const s = this.state
+      const now = Date.now()
+      if (now - s.bucket.startedAt >= COVERAGE_BUCKET_MS) {
+        s.buckets.push(s.bucket.samples > 0 && s.bucket.worn)
+        if (s.buckets.length > COVERAGE_BUCKETS) s.buckets.shift()
+        s.bucket = { startedAt: now, samples: 0, worn: s.worn }
+      }
+      if (DEBUG && now - s.lastLogAt >= RATE_LOG_MS) {
+        console.log('[rate]', Math.round((s.samplesSinceLog * 1000) / (now - s.lastLogAt)), 'Hz')
+        s.samplesSinceLog = 0
+        s.lastLogAt = now
+      }
+      this.render()
+    },
+
+    coverage() {
+      const s = this.state
+      if (!s.running) return 0
+      if (!s.buckets.length) return s.worn ? 1 : 0
+      return s.buckets.filter(Boolean).length / s.buckets.length
+    },
+
+    render() {
+      const s = this.state
+      const w = s.widgets
+      if (!w.title) return
+
+      let title = 'home.paused'
+      let ringColor = COLOR.track
+      if (s.running) {
+        title = s.worn ? 'home.covered' : 'home.not_worn'
+        ringColor = s.worn ? COLOR.green : COLOR.redSoft
+      }
+      w.title.setProperty(prop.TEXT, getText(title))
+      w.ring.setProperty(prop.MORE, {
+        ...L.RING,
+        color: ringColor,
+        end_angle: L.RING.start_angle + Math.max(1, 360 * this.coverage()),
+      })
+
+      // Last check
+      let last = getText('home.paused')
+      if (s.running && s.lastSampleAt) {
+        const age = Date.now() - s.lastSampleAt
+        last = age < 60000 ? getText('home.just_now') : getText('home.min_ago').replace('{n}', Math.floor(age / 60000))
+      }
+      w.rows[0].setProperty(prop.TEXT, last)
+      // Battery
+      w.rows[1].setProperty(prop.TEXT, `${s.battery.getCurrent()}%`)
+      // Phone link
+      const linked = connectStatus()
+      w.rows[2].setProperty(prop.MORE, {
+        ...L.ROWS[2].value,
+        text: getText(linked ? 'home.connected' : 'home.disconnected'),
+        color: linked ? COLOR.green : COLOR.redSoft,
+      })
     },
 
     onFallDetected(evt) {
       console.log('[fall]', JSON.stringify(evt))
       this.stopMonitoring()
-      this.setStatus(getText('status.fall'), L.COLOR.danger)
-      try {
-        push({ url: 'page/alert', params: JSON.stringify(evt) })
-      } catch (e) {
-        // page/alert is README Step 5; until it exists the status line above is the alert.
-        console.error('[fall] push page/alert failed', e)
-      }
+      this.state.widgets.title.setProperty(prop.TEXT, getText('home.fall'))
+      replace({ url: 'page/alert', params: JSON.stringify(evt) })
     },
 
     /** Debug: replay the synthetic forward fall through the detector, bypassing the sensor. */
@@ -176,41 +276,6 @@ Page(
       if (!this.state.running) this.startMonitoring()
       const events = replay(this.state.detector, DEMO_FALL, Date.now())
       console.log('[simulate] events:', events.length)
-    },
-
-    setStatus(text, color) {
-      const w = this.state.widgets
-      if (!w.status) return
-      w.status.setProperty(prop.TEXT, text)
-      w.statusDot.setProperty(prop.COLOR, color)
-    },
-
-    renderStatus() {
-      const s = this.state
-      const w = s.widgets
-      if (!w.toggle) return
-      if (!s.running) this.setStatus(getText('status.stopped'), L.COLOR.muted)
-      else if (!s.worn) this.setStatus(getText('status.not_worn'), L.COLOR.warn)
-      else this.setStatus(getText('status.monitoring'), L.COLOR.ok)
-      w.toggle.setProperty(prop.TEXT, getText(s.running ? 'btn.stop' : 'btn.start'))
-    },
-
-    renderReadout() {
-      const s = this.state
-      const w = s.widgets
-      if (!w.readout) return
-      if (!s.running) {
-        w.readout.setProperty(prop.TEXT, '')
-        return
-      }
-      const now = Date.now()
-      const elapsed = now - s.lastTickAt
-      if (elapsed >= 1000) {
-        s.hz = Math.round((s.samplesSinceTick * 1000) / elapsed)
-        s.samplesSinceTick = 0
-        s.lastTickAt = now
-      }
-      w.readout.setProperty(prop.TEXT, `${s.lastG.toFixed(2)} g  ·  ${s.hz} Hz  ·  ${s.detector.getState()}`)
     },
 
     onDestroy() {

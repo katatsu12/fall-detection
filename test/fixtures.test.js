@@ -3,11 +3,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { createFallDetector, replay } from '../utils/fall-detector.js'
 
-const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
+const dir = join(process.cwd(), 'test', 'fixtures')
 const files = readdirSync(dir).filter((f) => f.endsWith('.json'))
 
 test('fixtures directory is populated (run `npm run fixtures`)', () => {

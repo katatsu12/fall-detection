@@ -1,23 +1,110 @@
 msgid "title"
-msgstr "Fall Detection"
+msgstr "Fall Guard"
 
-msgid "status.stopped"
-msgstr "Stopped"
+msgid "home.covered"
+msgstr "You're covered"
 
-msgid "status.monitoring"
-msgstr "Monitoring"
+msgid "home.paused"
+msgstr "Paused"
 
-msgid "status.not_worn"
-msgstr "Not worn"
+msgid "home.not_worn"
+msgstr "Not on wrist"
 
-msgid "status.fall"
+msgid "home.fall"
 msgstr "Fall detected"
 
-msgid "btn.start"
-msgstr "Start"
+msgid "home.last_check"
+msgstr "Last check"
 
-msgid "btn.stop"
-msgstr "Stop"
+msgid "home.battery"
+msgstr "Battery"
 
-msgid "btn.simulate"
-msgstr "Simulate fall"
+msgid "home.phone"
+msgstr "Phone"
+
+msgid "home.just_now"
+msgstr "Just now"
+
+msgid "home.min_ago"
+msgstr "{n} min ago"
+
+msgid "home.connected"
+msgstr "Connected"
+
+msgid "home.disconnected"
+msgstr "Not linked"
+
+msgid "alert.title"
+msgstr "Are you alright?"
+
+msgid "alert.call_line"
+msgstr "We'll call {name},"
+
+msgid "alert.fallback_contact"
+msgstr "your contact"
+
+msgid "alert.then_line"
+msgstr "then emergency services"
+
+msgid "alert.fine"
+msgstr "I'm fine"
+
+msgid "alert.help"
+msgstr "Get help now"
+
+msgid "result.ok_title"
+msgstr "Glad you're OK"
+
+msgid "result.ok_line1"
+msgstr "Nobody was called."
+
+msgid "result.ok_line2"
+msgstr "We'll keep watching."
+
+msgid "result.closing"
+msgstr "Closing in {n}s"
+
+msgid "result.contacting"
+msgstr "CONTACTING"
+
+msgid "result.your_contact"
+msgstr "Your contact"
+
+msgid "result.sending"
+msgstr "Sending alert…"
+
+msgid "result.sent"
+msgstr "Alert sent · location shared"
+
+msgid "result.failed"
+msgstr "Alert could not be sent"
+
+msgid "result.no_phone"
+msgstr "Phone not reachable"
+
+msgid "result.done"
+msgstr "Done"
+
+msgid "settings.title"
+msgstr "How careful?"
+
+msgid "settings.relaxed"
+msgstr "Relaxed"
+
+msgid "settings.relaxed_sub"
+msgstr "Hard falls only"
+
+msgid "settings.balanced"
+msgstr "Balanced"
+
+msgid "settings.balanced_sub"
+msgstr "What we suggest"
+
+msgid "settings.watchful"
+msgstr "Watchful"
+
+msgid "settings.watchful_sub"
+msgstr "May ask more often"
+
+msgid "settings.siren"
+msgstr "Watch siren"

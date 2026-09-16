@@ -1,6 +1,6 @@
-# Fall Detection — Zepp OS Mini Program
+# Fall Guard — Zepp OS Mini Program
 
-A Zepp OS app that watches the wrist-worn accelerometer for the signature of a
+**Fall Guard** is a Zepp OS app that watches the wrist-worn accelerometer for the signature of a
 human fall (free-fall → impact → stillness), vibrates and asks "Are you OK?",
 and — if the wearer doesn't respond — forwards an SOS through the phone to an
 emergency contact.
@@ -112,7 +112,8 @@ Start/Stop toggle.
 └────────────────────────────────────────────────────────────────┘
 ```
 
-Project layout:
+Project layout (the directory and git repo keep the name `fall-detection`;
+the app itself is called **Fall Guard**):
 
 ```
 fall-detection/
@@ -121,17 +122,68 @@ fall-detection/
 ├── package.json           # deps: @zeppos/zml
 ├── assets/<device>/       # icon.png per target
 ├── page/
-│   ├── index.js           # monitoring UI + sensor wiring
-│   └── alert.js           # countdown / confirmation
+│   ├── index.js  index.{r,s}.layout.js      # Home: ring + facts, sensor wiring
+│   ├── alert.js  alert.{r,s}.layout.js      # "Are you alright?" countdown
+│   ├── result.js result.{r,s}.layout.js    # "Glad you're OK" / "Contacting"
+│   └── settings.js settings.{r,s}.layout.js # "How careful?" sensitivity
 ├── utils/
 │   ├── fall-detector.js   # algorithm (unit-testable in Node)
-│   └── ring-buffer.js
+│   ├── prefs.js           # localStorage-backed settings + sensitivity → presets
+│   ├── theme.js           # palette from the design
+│   └── demo-trace.js      # generated synthetic fall for the debug replay
+├── tools/render-mocks.py  # layout → PNG mocks (npm run mocks)
 ├── app-side/index.js      # SOS forwarding via fetch()
 ├── setting/index.js       # settings UI on the phone
 └── test/
     ├── fall-detector.test.js
     └── fixtures/*.json    # recorded accel traces (real falls / ADLs)
 ```
+
+---
+
+## 2b. Design (implemented 2026-09-16)
+
+Source: Claude Design project *Fall Detection App Interface* →
+`Fall Guard - Zepp OS.dc.html`, section **2A** ("Warm tone, two escalation
+steps, both screen shapes"). Four screens × round 480 and square 390×450.
+The SOS-sent state, which 2A doesn't cover, adapts 1A's "Contacting" screen.
+
+| Screen | Page | What's on it |
+|---|---|---|
+| Home — "You're covered" | `page/index` | Green coverage ring with shield, title, three facts: *Last check* (age of the latest sample), *Battery* (`Battery.getCurrent()`), *Phone* (`ble.connectStatus()`). |
+| Fall detected — "Are you alright?" | `page/alert` | Red countdown ring, "We'll call {contact}, then emergency services", white **I'm fine** pill, **Get help now** link. |
+| Confirmed — "Glad you're OK" | `page/result?type=ok` | Green check disc, "Nobody was called. We'll keep watching.", closes in 3 s. |
+| Contacting | `page/result?type=sos` | Initials avatar, contact name, live status of the `sos.send` request, **Done**. |
+| Sensitivity — "How careful?" | `page/settings` | Relaxed / Balanced / Watchful radio rows (→ `PRESETS.low/normal/high`), *Watch siren* toggle. |
+
+Interactions the design leaves implicit:
+
+- Home: **tap the ring** to pause/resume monitoring, **swipe up** for
+  Sensitivity, **long-press the ring** to replay a synthetic fall (`DEBUG`).
+- Alert: swipes are swallowed during the countdown so a gesture can't dismiss it.
+- Navigation through the alert flow is `replace()` end-to-end
+  (`index → alert → result → index`), so every page is built fresh.
+
+Design → Zepp OS mapping:
+
+| Design | Watch |
+|---|---|
+| Conic-gradient rings | `widget.ARC` track + progress, `start_angle: -90` (0° is 3 o'clock) |
+| Shield / check icons | `assets/default.{r,s}/shield.png`, `check.png` rendered from the SVG paths with `rsvg-convert` (sizes per shape) |
+| Radial red glow | three translucent `CIRCLE`s (`alpha` 18/22/26); a gradient PNG would be ~900 KB once the build converts it to TGA |
+| White pill / text link | `BUTTON` with `normal_color` white / black |
+| Radio rows, toggle | `FILL_RECT` + `STROKE_RECT` + `CIRCLE`, both states pre-created and swapped with `prop.VISIBLE` |
+| Noto Sans, weights, pulse animation | system font; not reproducible — skipped |
+| App icon | red disc + white shield (`assets/default.*/icon.png`) |
+
+Palette lives in `utils/theme.js`; per-shape geometry in `page/<page>.{r,s}.layout.js`.
+`npm run mocks` renders every screen for both shapes to `tools/mocks/sheet.png`
+straight from the layout files (no simulator needed) — check it after moving
+anything.
+
+Not wired yet: the **siren** toggle persists but no audio plays (needs an
+audio asset + `@zos/media`); `contactName` is read from `@zos/storage` and
+will be filled by the phone settings app (Step 7).
 
 ---
 
@@ -194,7 +246,7 @@ permissions and naming — it is the file checked in at the repo root.
   "configVersion": "v3",
   "app": {
     "appId": 27081,
-    "appName": "Fall Detection",
+    "appName": "Fall Guard",
     "appType": "app",
     "version": { "code": 1, "name": "1.0.0" },
     "icon": "icon.png",
@@ -213,14 +265,17 @@ permissions and naming — it is the file checked in at the repo root.
   "targets": {
     "default": {
       "module": {
-        "page": { "pages": ["page/index"] },
+        "page": { "pages": ["page/index", "page/alert", "page/result", "page/settings"] },
         "app-side": { "path": "app-side/index" },
         "setting": { "path": "setting/index" }
       },
-      "platforms": [{ "st": "r", "dw": 480 }]
+      "platforms": [
+        { "st": "r", "dw": 480 },
+        { "st": "s", "dw": 390 }
+      ]
     }
   },
-  "i18n": { "en-US": { "appName": "Fall Detection" } },
+  "i18n": { "en-US": { "appName": "Fall Guard" } },
   "defaultLanguage": "en-US",
   "debug": true
 }
@@ -234,9 +289,11 @@ permissions and naming — it is the file checked in at the repo root.
   type (`r` round, `s` square, `b` band) and `dw` the design width. One entry
   covers every device of that shape; `zeus build` then emits per-device
   packages. Per-device `deviceSource` targets are the older v2 style and are
-  not needed here.
-- `module.page.pages` must list **every** page you `push()` to — add
-  `"page/alert"` when that file exists (§5 Step 5).
+  not needed here. Each shape needs its own `page/<name>.<st>.layout.js`
+  (`index.r.layout.js` for round, `index.s.layout.js` for square — the
+  **Amazfit Active** is square, 390×450, API_LEVEL 3.6) and
+  `assets/default.<st>/icon.png`.
+- `module.page.pages` must list **every** page you navigate to.
 - `appId` / `vender` are placeholders assigned by the CLI; `zeus login` +
   the developer console give you real ones before publishing.
 
@@ -288,8 +345,7 @@ constants there and logic in `index.js`.
 
 ### Step 2 — Edit `app.json`  ✅ done
 
-§4 is applied: name, description, permissions, `debug`. Still to do later:
-add `"page/alert"` to `module.page.pages` once that page exists.
+§4 is applied: name, description, permissions, `debug`, all four pages.
 
 ### Step 3 — Write the detector (`utils/fall-detector.js`)  ✅ done
 
@@ -338,7 +394,7 @@ asserts every `fall_*.json` fires exactly once and every `adl_*.json` never
 does — drop real recordings in with those name prefixes and they're covered
 automatically.
 
-### Step 4 — Monitoring page (`page/index.js`)  ✅ done
+### Step 4 — Monitoring page (`page/index.js`)  ✅ done · UI replaced by the design in §2b
 
 Files: `page/index.js` (logic), `page/index.r.layout.js` (round-screen
 positions/colours, picked by `zosLoader:./index.[pf].layout.js`),
@@ -382,63 +438,48 @@ Things that differ from the original sketch:
 - `utils/demo-trace.js` is written by `npm run fixtures` from the same
   synthetic `fall_forward` trace the tests use — regenerate, don't edit.
 
-Build note: `zeus build` prints an esbuild `"import.meta" is not available`
-warning — it comes from the toolchain, not this code (the untouched scaffold
-prints it too).
+Build note: zeus's esbuild pass scans every `.js` in the project, including
+`test/`, and warns on `import.meta` — so test helpers use `process.cwd()`
+-relative paths instead (`npm` always runs scripts from the package root).
 
-### Step 5 — Alert page (`page/alert.js`)
+### Step 5 — Alert page (`page/alert.js`)  ✅ done · UI replaced by the design in §2b (result states moved to `page/result.js`)
 
-```js
-import { Vibrator, VIBRATOR_SCENE_CALL } from '@zos/sensor'
-import { back } from '@zos/router'
-import { createWidget, widget, prop } from '@zos/ui'
-import { BasePage } from '@zeppos/zml/base-page'
+Files: `page/alert.js`, `page/alert.r.layout.js`, `page/alert.s.layout.js`,
+strings in `page/i18n/en-US.po`, `"page/alert"` added to `app.json` pages.
 
-const COUNTDOWN_S = 30
+Flow:
 
-Page(BasePage({
-  state: { remaining: COUNTDOWN_S, timer: null, vib: null, label: null },
+1. `onInit(params)` parses the detector event `page/index` passed as JSON.
+2. `build` — `setPageBrightTime` for countdown + 60 s,
+   `pauseDropWristScreenOff({ duration: 0 })`, and
+   `onGesture(() => phase === 'countdown')` so a swipe can't dismiss the alert
+   by accident. `Vibrator.start({ mode: VIBRATOR_SCENE_CALL })` repeats until
+   `stop()`.
+3. UI: red "Fall detected" title, a countdown ring (`widget.ARC`, 0° = 3
+   o'clock, so `start_angle: -90` is 12 o'clock; `end_angle` shrinks each
+   second via `prop.MORE`), the big number, and two buttons — green
+   **I'm OK** and red **Send SOS now**.
+4. `tick()` every second; at 0 → `sendSos('timeout')`. Buttons call
+   `dismiss()` or `sendSos('manual')`.
+5. `sendSos` stops the vibration, shows "Sending SOS…", then
+   `this.request({ method: 'sos.send', params: { ...event, source, ts } },
+   { timeout: 15000 })`. Resolves to `{ ok }` from the app-side (Step 6);
+   `ok` → "SOS sent", otherwise "Send failed"; a rejection (phone out of
+   range) → "No phone connection".
+6. The result stays with a **Done** button, and auto-returns after 20 s.
+7. Navigation is `replace()` in both directions: `index → alert` and
+   `alert → index`. Each page is built fresh, so `AUTO_START` restarts
+   monitoring on return without relying on `onResume`.
 
-  onInit(params) { this.state.event = params ? JSON.parse(params) : {} },
+Gotchas found in the docs/typings:
 
-  build() {
-    this.state.vib = new Vibrator()
-    this.state.vib.start(VIBRATOR_SCENE_CALL)                // loops until stop()
-
-    createWidget(widget.TEXT, { x: 0, y: 80, w: 480, h: 60, text_size: 36, align_h: 1,
-      text: 'Fall detected' })
-    this.state.label = createWidget(widget.TEXT, { x: 0, y: 150, w: 480, h: 80,
-      text_size: 64, align_h: 1, text: String(COUNTDOWN_S) })
-    createWidget(widget.BUTTON, { x: 40, y: 260, w: 400, h: 80, radius: 40,
-      text: "I'm OK", normal_color: 0x1e7f3a, click_func: () => this.dismiss() })
-    createWidget(widget.BUTTON, { x: 40, y: 360, w: 400, h: 80, radius: 40,
-      text: 'Send SOS now', normal_color: 0xa02020, click_func: () => this.sendSos() })
-
-    this.state.timer = setInterval(() => {
-      this.state.remaining -= 1
-      this.state.label.setProperty(prop.TEXT, String(this.state.remaining))
-      if (this.state.remaining <= 0) this.sendSos()
-    }, 1000)
-  },
-
-  sendSos() {
-    this.cleanup()
-    this.state.label.setProperty(prop.TEXT, 'Sending…')
-    this.request({ method: 'sos.send', params: { ...this.state.event, ts: Date.now() } })
-      .then(r => this.state.label.setProperty(prop.TEXT, r && r.ok ? 'SOS sent' : 'Send failed'))
-      .catch(() => this.state.label.setProperty(prop.TEXT, 'No phone connection'))
-  },
-
-  dismiss() { this.cleanup(); back() },
-
-  cleanup() {
-    if (this.state.timer) { clearInterval(this.state.timer); this.state.timer = null }
-    if (this.state.vib) this.state.vib.stop()
-  },
-
-  onDestroy() { this.cleanup() },
-}))
-```
+- `Vibrator.start()` takes `{ mode }` — not a bare constant.
+- BUTTON text can only be changed with `setProperty(prop.MORE, { x, y, w, h,
+  text })`; `prop.TEXT` alone isn't supported on buttons (fixed on the index
+  toggle too).
+- `prop.VISIBLE` is used to swap the OK/SOS buttons for Done.
+- Until Step 6 exists, the app-side has no `sos.send` handler, so the request
+  ends in "Send failed" / "No phone connection" — the page itself is complete.
 
 ### Step 6 — App-side service (`app-side/index.js`)
 
@@ -510,22 +551,85 @@ none for the rest.
 
 ### Step 9 — Test on a real watch and tune
 
+#### 9a. One-time setup
+
+| Where | What |
+|---|---|
+| Terminal | `zeus login` — opens a browser; use the **same Zepp account** the phone app is logged into. Check with `zeus status`. |
+| Zepp phone app (≥ 6.9.0) | **Profile → Settings → About → tap the Zepp logo 7×** until the "Developer Mode" confirmation appears. |
+| Zepp phone app | Open **Developer Mode** (Profile → your watch → scroll to the bottom). It offers: *Scan* (install from a `zeus preview` QR), *Bridge*, *Screenshot*, per-app *Logs*, and "Device information" which shows the watch's **API_LEVEL** — confirm it is ≥ 3.0. |
+| Watch | Paired with that phone, Bluetooth on, nearby. |
+
+No developer-console registration is needed for side-loading; the `appId`
+the CLI generated is fine until you publish (Step 10).
+
+#### 9b. Install — option A: QR code (simplest)
+
 ```bash
-zeus preview          # scan QR with Zepp app → installs on watch
+zeus preview                        # prompts for a device model, then prints a QR code
+zeus preview -t "Amazfit Active"    # skip the prompt; -t takes the product name as listed
+zeus build   -t "Amazfit Active"    # same filter for a production package
 ```
 
-1. Add a "Record" mode that logs `{dt,x,y,z}` to `@zos/fs` for 60 s; export via
-   the app-side (`this.call` chunks) or `zeus bridge` logs.
-2. Measure the real sample rate per `FREQ_MODE_*` on your device — window sizes
-   in ms assume you know it.
-3. Record ~10 simulated falls onto a mattress plus ~30 daily activities.
-4. Tune §3 thresholds until you get zero false alarms on ADLs and ≥ 90 % recall
-   on the mattress falls. Expect wrist data to be noisier than the literature's
-   waist-mounted numbers.
-5. Battery: run for a full day; if drain is unacceptable drop to
-   `FREQ_MODE_LOW` and re-tune, or shorten `setPageBrightTime` and rely on
-   `setWakeUpRelaunch` (verify on your device whether sensor callbacks continue
-   with the screen off — behaviour is not documented and varies by firmware).
+A device is only offered if `app.json` has a platform with its screen shape
+(`st`) and its API level range covers `runtime.apiVersion.minVersion`. If
+the CLI says "no available device", that's the first thing to check.
+
+Phone: Developer Mode → **Scan** → point at the terminal QR. The phone
+downloads the package and pushes it to the watch over BLE (10–60 s). Re-run
+`zeus preview` after every code change.
+
+#### 9c. Install — option B: Developer Bridge (faster iteration)
+
+```bash
+zeus bridge             # opens a bridge$ prompt
+bridge$ connect         # lists "online" runtimes — pick the phone app
+bridge$ install         # builds and pushes to the watch through the phone
+bridge$ screenshot      # saves the watch screen (OS 2.0+)
+bridge$ uninstall       # removes the app
+bridge$ exit
+```
+
+Phone: Developer Mode → **+** (top right) → **Bridge**, and leave the app in
+the foreground. Both ends must be on the same Zepp account (the bridge is a
+cloud relay, not a LAN connection). Requires CLI ≥ 1.1.0, app ≥ 6.9.0.
+
+#### 9d. See the logs
+
+Phone: Developer Mode → tap the **Fall Guard** icon → **Logs** → start
+collection (bottom-right). "Device App" shows `console.log` from `page/*`
+(the `[fall-candidate]`, `[fall]`, `[simulate]` lines); "Side Service"
+shows `app-side/`. Stop collection before reading — the viewer buffers.
+
+#### 9e. What to check, in order
+
+1. **It runs.** Open the app on the watch: green ring, "You're covered",
+   *Last check: Just now*. The Device App log prints `[rate] NN Hz` every
+   5 s — that is the real `FREQ_MODE_NORMAL` rate on this hardware (README
+   §8, first unknown).
+2. **Wear gate.** Take the watch off: title → "Not on wrist", ring turns
+   red. Put it back.
+3. **Simulate fall.** Long-press the ring: the "Are you alright?" page
+   appears vibrating with the countdown; log shows `[fall] {...}`. "I'm fine"
+   → "Glad you're OK" → back to Home with monitoring restarted.
+4. **Screen-off behaviour.** Lower your wrist, wait 60 s, raise it. Does the
+   app come back (setWakeUpRelaunch)? Did the Hz counter keep running
+   while dark? This answers §8's second unknown and decides whether
+   `KEEP_BRIGHT_MS` can be shortened to save battery.
+5. **Real falls.** Onto a mattress, wrist-worn, 5–10 reps each of forward,
+   backward and sideways, plus a sitting-to-floor slump. Then ADLs: sit down
+   hard, clap, drop the arm onto a table, run 30 s, put the watch on a table.
+   Read the `[fall-candidate]` lines: each shows `peakG`, `freefallMs`,
+   `stillStd` and `reasons`. Tune `DEFAULTS` / `PRESETS` in
+   `utils/fall-detector.js` until ADLs stay at zero and mattress falls
+   fire; then `npm test` still has to pass.
+6. **Record traces** (later): a "Record" mode writing `{dt,x,y,z}` to
+   `@zos/fs` for 60 s, exported through the app-side, turns those sessions
+   into `test/fixtures/fall_*.json` / `adl_*.json` so tuning becomes
+   repeatable instead of manual.
+7. **Battery.** Leave it monitoring for a full day and note the drain; if
+   unacceptable, drop to `FREQ_MODE_LOW` and re-tune, or shorten
+   `KEEP_BRIGHT_MS` if step 4 showed the sensor survives screen-off.
 
 ### Step 10 — Build and ship
 

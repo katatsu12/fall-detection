@@ -2,7 +2,7 @@
   "configVersion": "v3",
   "app": {
     "appId": 27081,
-    "appName": "Fall Detection",
+    "appName": "Fall Guard",
     "appType": "app",
     "version": {
       "code": 1,
@@ -30,7 +30,10 @@
       "module": {
         "page": {
           "pages": [
-            "page/index"
+            "page/index",
+            "page/alert",
+            "page/result",
+            "page/settings"
           ]
         },
         "app-side": {
@@ -44,13 +47,17 @@
         {
           "st": "r",
           "dw": 480
+        },
+        {
+          "st": "s",
+          "dw": 390
         }
       ]
     }
   },
   "i18n": {
     "en-US": {
-      "appName": "Fall Detection"
+      "appName": "Fall Guard"
     }
   },
   "defaultLanguage": "en-US",

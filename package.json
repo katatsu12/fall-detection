@@ -1,11 +1,12 @@
 {
-  "name": "fall-detection",
+  "name": "fall-guard",
   "version": "1.0.0",
-  "description": "Zepp OS fall detection mini program",
+  "description": "Fall Guard — Zepp OS fall detection mini program",
   "main": "app.js",
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
-    "fixtures": "node test/helpers/make-fixtures.js"
+    "fixtures": "node test/helpers/make-fixtures.js",
+    "mocks": "python3 tools/render-mocks.py"
   },
   "author": "",
   "license": "ISC",
