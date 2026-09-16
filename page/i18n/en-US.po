@@ -1,2 +1,23 @@
-msgid "example"
-msgstr "This is an example in device"
+msgid "title"
+msgstr "Fall Detection"
+
+msgid "status.stopped"
+msgstr "Stopped"
+
+msgid "status.monitoring"
+msgstr "Monitoring"
+
+msgid "status.not_worn"
+msgstr "Not worn"
+
+msgid "status.fall"
+msgstr "Fall detected"
+
+msgid "btn.start"
+msgstr "Start"
+
+msgid "btn.stop"
+msgstr "Stop"
+
+msgid "btn.simulate"
+msgstr "Simulate fall"

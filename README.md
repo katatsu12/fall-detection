@@ -338,78 +338,53 @@ asserts every `fall_*.json` fires exactly once and every `adl_*.json` never
 does — drop real recordings in with those name prefixes and they're covered
 automatically.
 
-### Step 4 — Monitoring page (`page/index.js`)
+### Step 4 — Monitoring page (`page/index.js`)  ✅ done
 
-Responsibilities: request permissions, start the sensor, keep the page alive,
-feed samples to the detector, show status, and route to the alert page.
+Files: `page/index.js` (logic), `page/index.r.layout.js` (round-screen
+positions/colours, picked by `zosLoader:./index.[pf].layout.js`),
+`page/i18n/en-US.po` (strings), `app.js` (now `BaseApp`), `utils/demo-trace.js`
+(generated).
 
-```js
-import { Accelerometer, Wear, FREQ_MODE_NORMAL } from '@zos/sensor'
-import { setPageBrightTime, pauseDropWristScreenOff, resetDropWristScreenOff,
-         setWakeUpRelaunch } from '@zos/display'
-import { push } from '@zos/router'
-import { queryPermission, requestPermission } from '@zos/app'
-import { createWidget, widget, prop } from '@zos/ui'
-import { BasePage } from '@zeppos/zml/base-page'
-import { createFallDetector } from '../utils/fall-detector'
+What the page does:
 
-const PERMS = ['device:os.accelerometer']
+1. `onInit` — `setWakeUpRelaunch({ relaunch: true })` so a screen wake returns
+   here instead of the watch face; builds the detector and logs every
+   candidate as `[fall-candidate] {...}` for tuning.
+2. `startMonitoring()` (auto on open, or via the Start/Stop button) — creates
+   `Wear` + `Accelerometer`, `setFreqMode(FREQ_MODE_NORMAL)`, `start()`, then
+   `setPageBrightTime({ brightTime: 2147483000 })` and
+   `pauseDropWristScreenOff({ duration: 0 })` to keep the page alive.
+3. `onSample()` — reads `getCurrent()`, updates the live `g` value and a sample
+   counter, and feeds the detector unless `Wear.getStatus() === 0` (not worn).
+   A wear-off also `reset()`s the detector so a half-seen fall can't span a gap.
+4. A 250 ms UI timer shows `1.02 g · 48 Hz · IDLE` — the **measured sample
+   rate**, which answers the first unknown in §8. Widgets are never touched
+   per sample.
+5. `onFall` — stops the sensor, restores screen behaviour, sets the status to
+   "Fall detected" and `push({ url: 'page/alert', params: JSON.stringify(evt) })`.
+6. `stopMonitoring()` / `onDestroy` — `offChange()` + `stop()` on both sensors,
+   clears the timer, `resetPageBrightTime()`, `resetDropWristScreenOff()`.
+7. Debug button "Simulate fall" (`DEBUG = true` at the top of the file) replays
+   `DEMO_FALL` from `utils/demo-trace.js` straight into the detector, so the
+   whole flow can be exercised in the simulator where there is no sensor data.
 
-Page(BasePage({
-  state: { running: false, accel: null, wear: null, detector: null, statusText: null },
+Things that differ from the original sketch:
 
-  onInit() {
-    setWakeUpRelaunch({ relaunch: true })      // come back to this page after screen-off
-    this.state.detector = createFallDetector()
-    this.state.detector.onFall(evt => {
-      this.stopMonitoring()
-      push({ url: 'page/alert', params: JSON.stringify(evt) })
-    })
-  },
+- **No runtime permission request.** `device:os.accelerometer` is a static
+  permission granted by `app.json`; `@zos/app requestPermission` is for
+  *dynamic* permissions such as `device:os.bg_service`.
+- **`app.js` must use zml's `BaseApp`.** `BasePage` reads its messaging
+  channel from `getApp()._options.globalData`, so a plain `App({})` makes
+  every `BasePage.onInit` throw.
+- Page lifecycle at API 3.0 is `onInit(params)` / `build` / `onDestroy` only.
+  (`onResume` / `onPause` exist at runtime and zml forwards them, but the 3.0
+  typings don't declare them — don't rely on them.)
+- `utils/demo-trace.js` is written by `npm run fixtures` from the same
+  synthetic `fall_forward` trace the tests use — regenerate, don't edit.
 
-  build() {
-    this.state.statusText = createWidget(widget.TEXT, {
-      x: 0, y: 160, w: 480, h: 60, text_size: 32, align_h: 1, text: 'Stopped',
-    })
-    createWidget(widget.BUTTON, {
-      x: 90, y: 260, w: 300, h: 80, text: 'Start / Stop', radius: 40,
-      click_func: () => (this.state.running ? this.stopMonitoring() : this.ensurePermsThenStart()),
-    })
-  },
-
-  ensurePermsThenStart() {
-    const [granted] = queryPermission({ permissions: PERMS })
-    if (granted === 2) return this.startMonitoring()
-    requestPermission({ permissions: PERMS, callback: ([r]) => r === 2 && this.startMonitoring() })
-  },
-
-  startMonitoring() {
-    const { detector } = this.state
-    this.state.wear = new Wear()
-    this.state.accel = new Accelerometer()
-    this.state.accel.setFreqMode(FREQ_MODE_NORMAL)
-    this.state.accel.onChange(() => {
-      if (this.state.wear.getStatus() === 0) return          // not on wrist
-      const { x, y, z } = this.state.accel.getCurrent()
-      detector.push(Date.now(), x, y, z)
-    })
-    this.state.accel.start()
-    setPageBrightTime({ brightTime: 2147483000 })            // keep page alive
-    pauseDropWristScreenOff({ duration: 0 })
-    this.state.running = true
-    this.state.statusText.setProperty(prop.TEXT, 'Monitoring…')
-  },
-
-  stopMonitoring() {
-    if (this.state.accel) { this.state.accel.offChange(); this.state.accel.stop() }
-    resetDropWristScreenOff()
-    this.state.running = false
-    this.state.statusText && this.state.statusText.setProperty(prop.TEXT, 'Stopped')
-  },
-
-  onDestroy() { this.stopMonitoring() },
-}))
-```
+Build note: `zeus build` prints an esbuild `"import.meta" is not available`
+warning — it comes from the toolchain, not this code (the untouched scaffold
+prints it too).
 
 ### Step 5 — Alert page (`page/alert.js`)
 
