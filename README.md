@@ -481,35 +481,56 @@ Gotchas found in the docs/typings:
 - Until Step 6 exists, the app-side has no `sos.send` handler, so the request
   ends in "Send failed" / "No phone connection" — the page itself is complete.
 
-### Step 6 — App-side service (`app-side/index.js`)
+### Step 6 — App-side service (`app-side/index.js`)  ✅ done
 
-Runs inside the Zepp phone app. Receives the SOS and forwards it over HTTPS.
+Runs inside the Zepp phone app (zml `BaseSideService`). Three messages:
 
-```js
-import { BaseSideService } from '@zeppos/zml/base-side'
+| Direction | Method | Purpose |
+|---|---|---|
+| watch → phone | `sos.send` `{ source, ts, event }` | POST the alert to the webhook; replies `{ ok, status }` or `{ ok: false, error }` |
+| watch → phone | `prefs.get` | Home asks for the contact name on open (5 s timeout, silently keeps stored values if the phone is out of range) |
+| phone → watch | `prefs.update` | pushed from `onSettingsChange` whenever the settings page edits `contactName`; Home's `onCall` stores it via `utils/prefs.js` |
 
-AppSideService(BaseSideService({
-  onRequest(req, res) {
-    if (req.method !== 'sos.send') return res(null, { ok: false, error: 'unknown method' })
+Settings are read from `settings.settingsStorage` (string-only) under the
+keys the phone settings page (Step 7) will write: `contactName`,
+`contactPhone`, `webhookUrl`, `webhookToken`.
 
-    const url = settings.settingsStorage.getItem('webhookUrl')
-    const contact = settings.settingsStorage.getItem('contact')
-    if (!url) return res(null, { ok: false, error: 'no webhook configured' })
+**Webhook contract.** The Zepp app cannot place calls, so the webhook is the
+escalation engine ("call the contact, then emergency services"). It receives:
 
-    fetch({
-      url,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'fall', contact, ...req.params }),
-    })
-      .then(r => res(null, { ok: r.status >= 200 && r.status < 300, status: r.status }))
-      .catch(e => res(null, { ok: false, error: String(e) }))
-  },
-}))
+```http
+POST <webhookUrl>
+Authorization: Bearer <webhookToken>      # only if set
+Content-Type: application/json
+
+{
+  "type": "fall",
+  "app": "fall-guard",
+  "source": "timeout" | "manual",
+  "ts": 1789550000000,
+  "contact": { "name": "Anna Reyes", "phone": "+49…" },
+  "event": { "t", "freefallMs", "peakG", "stillStd", "angleDeg", "gyroPeakDps", "samples" }
+}
 ```
 
-For Twilio, point `url` at a tiny relay you host (Cloud Function / Worker) that
-holds the Twilio credentials — never ship API secrets inside the mini program.
+Any 2xx counts as sent; anything else (or a 10 s timeout) shows "Alert could
+not be sent" on the watch. Point it at a Twilio Function / Cloud Function /
+Make scenario that holds the credentials — never bundle secrets in the app.
+
+**Local end-to-end test** without a real relay:
+
+```bash
+npm run webhook          # tools/webhook-dev-server.js on :8787, prints your LAN URLs
+FAIL=1 npm run webhook   # answers 500 to exercise the failure state
+```
+
+Put `http://<mac-lan-ip>:8787/sos` in the Webhook URL setting (phone and Mac
+on the same Wi-Fi), long-press the ring on the watch → *Get help now* → the
+payload prints in the terminal and the watch shows "Alert sent".
+
+Not attached yet: **location**. The status string is "Alert sent" until a
+position is actually included (watch GPS via `@zos/sensor Geolocation` on
+GPS models, or phone location if the Zepp app exposes it).
 
 ### Step 7 — Settings page (`setting/index.js`)
 

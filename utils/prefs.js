@@ -39,6 +39,12 @@ export function detectorOptions() {
   return PRESET_FOR[getPref('sensitivity')] || PRESET_FOR[SENSITIVITY.BALANCED]
 }
 
+/** Apply prefs received from the phone (app-side `prefs.get` / `prefs.update`). */
+export function applyRemotePrefs(remote) {
+  if (!remote || typeof remote !== 'object') return
+  if (typeof remote.contactName === 'string') setPref('contactName', remote.contactName)
+}
+
 export function firstName(name) {
   return String(name || '')
     .trim()

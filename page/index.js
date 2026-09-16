@@ -30,7 +30,7 @@ import { BasePage } from '@zeppos/zml/base-page'
 import * as L from 'zosLoader:./index.[pf].layout.js'
 import { COLOR } from '../utils/theme'
 import { createFallDetector, replay, magnitudeG } from '../utils/fall-detector'
-import { detectorOptions } from '../utils/prefs'
+import { detectorOptions, applyRemotePrefs } from '../utils/prefs'
 import { DEMO_FALL } from '../utils/demo-trace'
 
 const AUTO_START = true // start monitoring as soon as the page opens
@@ -41,6 +41,7 @@ const UI_REFRESH_MS = 1000
 const RATE_LOG_MS = 5000
 const COVERAGE_BUCKET_MS = 5000 // ring = share of 5-second buckets with samples while worn
 const COVERAGE_BUCKETS = 60 // …over the last five minutes
+const PREFS_SYNC_TIMEOUT_MS = 5000
 
 const WEAR_NOT_WORN = 0
 
@@ -72,6 +73,19 @@ Page(
       detector.onFall((evt) => this.onFallDetected(evt))
       this.state.detector = detector
       this.state.battery = new Battery()
+      this.syncPrefs()
+    },
+
+    /** Pull the contact name from the phone; keep stored values if it's out of range. */
+    syncPrefs() {
+      this.request({ method: 'prefs.get' }, { timeout: PREFS_SYNC_TIMEOUT_MS })
+        .then((p) => applyRemotePrefs(p))
+        .catch(() => {})
+    },
+
+    /** Pushed by the app-side when the phone settings page changes. */
+    onCall(data) {
+      if (data && data.method === 'prefs.update') applyRemotePrefs(data.params)
     },
 
     build() {

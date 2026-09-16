@@ -74,7 +74,7 @@ msgid "result.sending"
 msgstr "Sending alert…"
 
 msgid "result.sent"
-msgstr "Alert sent · location shared"
+msgstr "Alert sent"
 
 msgid "result.failed"
 msgstr "Alert could not be sent"
