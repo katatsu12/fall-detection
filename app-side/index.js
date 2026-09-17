@@ -55,8 +55,16 @@ AppSideService(
     },
 
     // Fired by zml when the phone settings page writes to settingsStorage.
-    onSettingsChange({ key }) {
+    onSettingsChange({ key, newValue }) {
       if (key === 'contactName') this.call({ method: 'prefs.update', params: devicePrefs() })
+      if (key === 'testAlertRequest' && Number(newValue) > 0) this.runTestAlert(Number(newValue))
+    },
+
+    /** "Send test alert" from the settings page: POST with source 'test', report back via storage. */
+    runTestAlert(ts) {
+      this.sendSos({ source: 'test', ts, event: {} })
+        .catch((e) => ({ ok: false, error: String((e && e.message) || e) }))
+        .then((r) => settings.settingsStorage.setItem('testAlertResult', JSON.stringify({ ...r, ts })))
     },
 
     /**
@@ -75,7 +83,7 @@ AppSideService(
       const body = {
         type: 'fall',
         app: 'fall-guard',
-        source: params.source || 'unknown', // 'timeout' | 'manual'
+        source: params.source || 'unknown', // 'timeout' | 'manual' | 'test'
         ts: params.ts || Date.now(),
         contact: { name: setting('contactName'), phone: setting('contactPhone') },
         event: params.event || {},

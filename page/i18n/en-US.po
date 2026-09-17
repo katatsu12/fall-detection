@@ -13,27 +13,6 @@ msgstr "Not on wrist"
 msgid "home.fall"
 msgstr "Fall detected"
 
-msgid "home.last_check"
-msgstr "Last check"
-
-msgid "home.battery"
-msgstr "Battery"
-
-msgid "home.phone"
-msgstr "Phone"
-
-msgid "home.just_now"
-msgstr "Just now"
-
-msgid "home.min_ago"
-msgstr "{n} min ago"
-
-msgid "home.connected"
-msgstr "Connected"
-
-msgid "home.disconnected"
-msgstr "Not linked"
-
 msgid "alert.title"
 msgstr "Are you alright?"
 

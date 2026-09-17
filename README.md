@@ -150,7 +150,7 @@ The SOS-sent state, which 2A doesn't cover, adapts 1A's "Contacting" screen.
 
 | Screen | Page | What's on it |
 |---|---|---|
-| Home — "You're covered" | `page/index` | Green coverage ring with shield, title, three facts: *Last check* (age of the latest sample), *Battery* (`Battery.getCurrent()`), *Phone* (`ble.connectStatus()`). |
+| Home — "You're covered" | `page/index` | Simplified from the design: a single coverage ring with the shield, centred, and the state title beneath it (covered / paused / not on wrist). The three info rows were dropped on 2026-09-16. |
 | Fall detected — "Are you alright?" | `page/alert` | Red countdown ring, "We'll call {contact}, then emergency services", white **I'm fine** pill, **Get help now** link. |
 | Confirmed — "Glad you're OK" | `page/result?type=ok` | Green check disc, "Nobody was called. We'll keep watching.", closes in 3 s. |
 | Contacting | `page/result?type=sos` | Initials avatar, contact name, live status of the `sos.send` request, **Done**. |
@@ -169,7 +169,7 @@ Design → Zepp OS mapping:
 | Design | Watch |
 |---|---|
 | Conic-gradient rings | `widget.ARC` track + progress, `start_angle: -90` (0° is 3 o'clock) |
-| Shield / check icons | `assets/default.{r,s}/shield.png`, `check.png` rendered from the SVG paths with `rsvg-convert` (sizes per shape) |
+| Shield / check icons | `assets/default.{r,s}/shield.png` (68 / 62 px), `check.png` (60 / 54 px) rendered from the SVG paths with `rsvg-convert` |
 | Radial red glow | three translucent `CIRCLE`s (`alpha` 18/22/26); a gradient PNG would be ~900 KB once the build converts it to TGA |
 | White pill / text link | `BUTTON` with `normal_color` white / black |
 | Radio rows, toggle | `FILL_RECT` + `STROKE_RECT` + `CIRCLE`, both states pre-created and swapped with `prop.VISIBLE` |
@@ -532,27 +532,29 @@ Not attached yet: **location**. The status string is "Alert sent" until a
 position is actually included (watch GPS via `@zos/sensor Geolocation` on
 GPS models, or phone location if the Zepp app exposes it).
 
-### Step 7 — Settings page (`setting/index.js`)
+### Step 7 — Settings page (`setting/index.js`)  ✅ done
 
-Rendered in the Zepp phone app. Store: emergency contact, webhook URL,
-countdown seconds, sensitivity (which maps to `IMPACT_G` / `STILL_VAR_G`).
+Rendered inside the Zepp phone app (Fall Guard → Settings). Components are
+globals (`View`, `Section`, `TextInput`, `Text`, `Button`), and `build(props)`
+re-runs whenever `settingsStorage` changes, so the page is a pure function of
+storage.
 
-```js
-AppSettingsPage({
-  build(props) {
-    return View({}, [
-      TextInput({ label: 'Emergency contact', settingsKey: 'contact' }),
-      TextInput({ label: 'Webhook URL', settingsKey: 'webhookUrl' }),
-      Select({ label: 'Sensitivity', settingsKey: 'sensitivity',
-        options: [{ name: 'Low', value: 'low' }, { name: 'Normal', value: 'normal' }, { name: 'High', value: 'high' }] }),
-    ])
-  },
-})
-```
+| Section | Fields → `settingsStorage` key |
+|---|---|
+| Emergency contact | Name → `contactName`, Phone → `contactPhone` (the watch shows "We'll call {first name}…") |
+| Alert delivery | Webhook URL → `webhookUrl`, Bearer token → `webhookToken`, **Send test alert** |
+| On the watch | note that sensitivity + siren live on the wrist (swipe up on Home) — one source of truth, no two-way sync |
 
-Push sensitivity to the watch on change (app-side `onSettingsChange` →
-`this.call({ method: 'config.update', params })`; device `onCall` → rebuild
-the detector with new thresholds and persist with `@zos/storage`).
+**Send test alert** goes through storage, since the settings page can't
+talk to the app-side directly: the button writes `testAlertRequest = now`;
+the app-side's `onSettingsChange` runs `sendSos({ source: 'test' })` and
+writes `testAlertResult = { ok, status | error, ts }`; the page re-renders and
+shows "Delivered (HTTP 200)", "Enter a webhook URL first." or the error.
+
+`contactName` edits are pushed to the watch immediately (`prefs.update`), so
+the alert caption updates without reopening the app.
+
+Strings live in `setting/i18n/en-US.po` (`gettext`).
 
 ### Step 8 — Test in the simulator with synthetic data
 

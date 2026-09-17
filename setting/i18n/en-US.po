@@ -1,2 +1,53 @@
-msgid "example"
-msgstr "This is an example in app-side"
+msgid "section.contact"
+msgstr "Emergency contact"
+
+msgid "contact.name"
+msgstr "Name"
+
+msgid "contact.name_placeholder"
+msgstr "e.g. Anna Reyes"
+
+msgid "contact.phone"
+msgstr "Phone"
+
+msgid "contact.phone_placeholder"
+msgstr "+1 555 0100"
+
+msgid "contact.help"
+msgstr "During the countdown the watch says \"We'll call {name}, then emergency services\". The call itself is placed by your webhook relay."
+
+msgid "section.delivery"
+msgstr "Alert delivery"
+
+msgid "delivery.url"
+msgstr "Webhook URL"
+
+msgid "delivery.url_placeholder"
+msgstr "https://example.com/sos"
+
+msgid "delivery.token"
+msgstr "Bearer token (optional)"
+
+msgid "delivery.help"
+msgstr "When the wearer doesn't respond, the phone POSTs a JSON alert here. Point it at a relay (Twilio Function, Cloud Function, Make) that calls the contact and then emergency services."
+
+msgid "delivery.test"
+msgstr "Send test alert"
+
+msgid "delivery.testing"
+msgstr "Sending…"
+
+msgid "delivery.test_ok"
+msgstr "Delivered (HTTP {status})"
+
+msgid "delivery.test_fail"
+msgstr "Failed: {error}"
+
+msgid "delivery.no_url"
+msgstr "Enter a webhook URL first."
+
+msgid "section.watch"
+msgstr "On the watch"
+
+msgid "watch.help"
+msgstr "Sensitivity and the siren are set on the watch: swipe up on the Fall Guard home screen."

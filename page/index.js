@@ -1,11 +1,11 @@
 /**
- * Home ("You're covered") — design 2A.
+ * Home — a single detector ring in the middle of the screen.
  *
  * Runs the accelerometer in the foreground (Zepp OS forbids it in background
  * services — README §1.2), keeps the page alive, feeds samples to the
  * detector and hands off to page/alert when a fall is confirmed.
  *
- * Interaction (the design keeps the screen to a ring and three facts):
+ * Interaction (the screen is only the ring):
  *   tap the ring         → pause / resume monitoring
  *   long-press the ring  → replay a synthetic fall (DEBUG only)
  *   swipe up             → sensitivity settings
@@ -13,8 +13,7 @@
  * Navigation to/from the alert flow uses replace(), so each page starts
  * fresh and monitoring restarts via AUTO_START when the flow returns here.
  */
-import { Accelerometer, Wear, Battery, FREQ_MODE_NORMAL } from '@zos/sensor'
-import { connectStatus } from '@zos/ble'
+import { Accelerometer, Wear, FREQ_MODE_NORMAL } from '@zos/sensor'
 import {
   setPageBrightTime,
   resetPageBrightTime,
@@ -53,10 +52,8 @@ Page(
       worn: true,
       accel: null,
       wear: null,
-      battery: null,
       detector: null,
       uiTimer: null,
-      lastSampleAt: 0,
       samplesSinceLog: 0,
       lastLogAt: 0,
       bucket: { startedAt: 0, samples: 0, worn: true },
@@ -72,7 +69,6 @@ Page(
       detector.onCandidate((c) => console.log('[fall-candidate]', JSON.stringify(c)))
       detector.onFall((evt) => this.onFallDetected(evt))
       this.state.detector = detector
-      this.state.battery = new Battery()
       this.syncPrefs()
     },
 
@@ -109,25 +105,6 @@ Page(
         color: COLOR.text,
         align_h: align.CENTER_H,
         align_v: align.CENTER_V,
-      })
-
-      const labels = ['home.last_check', 'home.battery', 'home.phone']
-      w.rows = L.ROWS.map((row, i) => {
-        createWidget(widget.FILL_RECT, { ...row.rect, color: COLOR.card })
-        createWidget(widget.TEXT, {
-          ...row.label,
-          text: getText(labels[i]),
-          color: COLOR.muted,
-          align_h: align.LEFT,
-          align_v: align.CENTER_V,
-        })
-        return createWidget(widget.TEXT, {
-          ...row.value,
-          text: '',
-          color: COLOR.textSoft,
-          align_h: align.RIGHT,
-          align_v: align.CENTER_V,
-        })
       })
 
       onGesture((g) => {
@@ -170,7 +147,6 @@ Page(
 
       const now = Date.now()
       s.running = true
-      s.lastSampleAt = 0
       s.samplesSinceLog = 0
       s.lastLogAt = now
       s.buckets = []
@@ -207,7 +183,6 @@ Page(
       const s = this.state
       const { x, y, z } = s.accel.getCurrent()
       const now = Date.now()
-      s.lastSampleAt = now
       s.samplesSinceLog++
       s.bucket.samples++
       if (!s.worn) {
@@ -218,7 +193,7 @@ Page(
       s.detector.push(now, x, y, z)
     },
 
-    /** Once a second: roll the coverage bucket, log the sample rate, refresh the rows. */
+    /** Once a second: roll the coverage bucket, log the sample rate, refresh the ring. */
     tick() {
       const s = this.state
       const now = Date.now()
@@ -258,23 +233,6 @@ Page(
         ...L.RING,
         color: ringColor,
         end_angle: L.RING.start_angle + Math.max(1, 360 * this.coverage()),
-      })
-
-      // Last check
-      let last = getText('home.paused')
-      if (s.running && s.lastSampleAt) {
-        const age = Date.now() - s.lastSampleAt
-        last = age < 60000 ? getText('home.just_now') : getText('home.min_ago').replace('{n}', Math.floor(age / 60000))
-      }
-      w.rows[0].setProperty(prop.TEXT, last)
-      // Battery
-      w.rows[1].setProperty(prop.TEXT, `${s.battery.getCurrent()}%`)
-      // Phone link
-      const linked = connectStatus()
-      w.rows[2].setProperty(prop.MORE, {
-        ...L.ROWS[2].value,
-        text: getText(linked ? 'home.connected' : 'home.disconnected'),
-        color: linked ? COLOR.green : COLOR.redSoft,
       })
     },
 

@@ -66,8 +66,6 @@ for shape in ['r', 's']:
     l = L[f'index.{shape}']; im, d = canvas(shape)
     arc(d, l['RING'], C['track'], 270); arc(d, l['RING'], C['green'], l['RING']['start_angle'] + 360 * 0.88)
     rrect(d, l['DISC'], C['bg']); icon(d, l['SHIELD']); txt(d, l['TITLE'], "You're covered", C['text'])
-    for row, (lab, val, vc) in zip(l['ROWS'], [('Last check', 'Just now', C['textSoft']), ('Battery', '78%', C['textSoft']), ('Phone', 'Connected', C['green'])]):
-        rrect(d, row['rect'], C['card']); txt(d, row['label'], lab, C['muted'], 'l'); txt(d, row['value'], val, vc, 'r')
     save(im, 'home', shape)
 
     l = L[f'alert.{shape}']; im, d = canvas(shape)
