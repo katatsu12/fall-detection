@@ -8,7 +8,7 @@
 import { Vibrator, VIBRATOR_SCENE_CALL } from '@zos/sensor'
 import { replace } from '@zos/router'
 import { setPageBrightTime, pauseDropWristScreenOff, resetDropWristScreenOff } from '@zos/display'
-import { onGesture } from '@zos/interaction'
+import { onGesture, offGesture } from '@zos/interaction'
 import { createWidget, widget, prop, align } from '@zos/ui'
 import { getText } from '@zos/i18n'
 import { BasePage } from '@zeppos/zml/base-page'
@@ -130,6 +130,7 @@ Page(
 
     onDestroy() {
       this.cleanup()
+      offGesture()
       resetDropWristScreenOff()
     },
   }),

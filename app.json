@@ -16,7 +16,9 @@
     "device:os.accelerometer",
     "device:os.gyroscope",
     "device:os.notification",
-    "device:os.local_storage"
+    "device:os.local_storage",
+    "device:os.alarm",
+    "device:os.bg_service"
   ],
   "runtime": {
     "apiVersion": {
@@ -33,7 +35,13 @@
             "page/index",
             "page/alert",
             "page/result",
-            "page/settings"
+            "page/settings",
+            "page/probe"
+          ]
+        },
+        "app-service": {
+          "services": [
+            "app-service/probe"
           ]
         },
         "app-side": {

@@ -16,7 +16,7 @@ emergency contact.
 ## 1. What the Zepp OS docs tell us (research summary)
 
 Sources: <https://docs.zepp.com/docs/reference/app-json/> and the linked
-device-app / side-service API references (see §10 for the full list).
+device-app / side-service API references (see §11 for the full list).
 
 ### 1.1 Sensors we can use
 
@@ -77,8 +77,9 @@ Start/Stop toggle.
 ]
 ```
 
-`device:os.bg_service` is **not** needed — we can't use the sensor there anyway
-(§1.2). Add it only if you later add a low-power heart-rate watchdog service.
+`device:os.bg_service` is only there for the background probe (§10) — the
+accelerometer can't be used in a service (§1.2), so the production path
+doesn't need it.
 
 ### 1.5 Toolchain
 
@@ -102,13 +103,16 @@ Start/Stop toggle.
 │  utils/fall-detector.js  ── pure state machine (no zOS deps)   │
 │      │  emits 'fall'                                           │
 │      ▼                                                         │
-│  page/alert.js  ── vibrate, 30 s countdown, I'm OK / Send SOS  │
-│      │  zml this.request({ method: 'sos.send' })               │
+│  page/alert.js  ── vibrate, 30 s countdown, I'm fine / Get help│
+│      │  replace() on timeout or "Get help now"                 │
+│      ▼                                                         │
+│  page/result.js ── zml this.request({ method: 'sos.send' })    │
+│      │                          page/settings.js ── sensitivity│
 └──────┼─────────────────────────────────────────────────────────┘
        │ BLE
 ┌──────▼───────────── Phone (app-side service) ──────────────────┐
 │  app-side/index.js ── onRequest → fetch(POST webhook/Twilio)   │
-│  setting/index.js  ── emergency contact, webhook URL, sens.    │
+│  setting/index.js  ── emergency contact, webhook URL + token   │
 └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -125,17 +129,23 @@ fall-detection/
 │   ├── index.js  index.{r,s}.layout.js      # Home: ring + facts, sensor wiring
 │   ├── alert.js  alert.{r,s}.layout.js      # "Are you alright?" countdown
 │   ├── result.js result.{r,s}.layout.js    # "Glad you're OK" / "Contacting"
-│   └── settings.js settings.{r,s}.layout.js # "How careful?" sensitivity
+│   ├── settings.js settings.{r,s}.layout.js # "How careful?" sensitivity
+│   └── probe.js  probe.{r,s}.layout.js      # background probe (developer screen, §10)
 ├── utils/
 │   ├── fall-detector.js   # algorithm (unit-testable in Node)
 │   ├── prefs.js           # localStorage-backed settings + sensitivity → presets
+│   ├── monitor-mode.js    # dimming, shared "awake" deadline, dead-man's alarm (§10.5)
+│   ├── raise-detector.js  # raise-to-wake from the accel stream (pure, tested)
+│   ├── probe-store.js     # record shared by the probe service and its page
 │   ├── theme.js           # palette from the design
 │   └── demo-trace.js      # generated synthetic fall for the debug replay
 ├── tools/render-mocks.py  # layout → PNG mocks (npm run mocks)
+├── app-service/probe.js   # device background service: feasibility probe (§10)
 ├── app-side/index.js      # SOS forwarding via fetch()
 ├── setting/index.js       # settings UI on the phone
 └── test/
     ├── fall-detector.test.js
+    ├── raise-detector.test.js
     └── fixtures/*.json    # recorded accel traces (real falls / ADLs)
 ```
 
@@ -150,7 +160,7 @@ The SOS-sent state, which 2A doesn't cover, adapts 1A's "Contacting" screen.
 
 | Screen | Page | What's on it |
 |---|---|---|
-| Home — "You're covered" | `page/index` | Simplified from the design: a single coverage ring with the shield, centred, and the state title beneath it (covered / paused / not on wrist). The three info rows were dropped on 2026-09-16. |
+| Home — "You're covered" | `page/index` | Simplified from the design: a single coverage ring with the shield, centred, the state title beneath it (covered / paused / not on wrist) and a clock line above, since in monitor mode this screen *is* the wearer's watch face. The three info rows were dropped on 2026-09-16. |
 | Fall detected — "Are you alright?" | `page/alert` | Red countdown ring, "We'll call {contact}, then emergency services", white **I'm fine** pill, **Get help now** link. |
 | Confirmed — "Glad you're OK" | `page/result?type=ok` | Green check disc, "Nobody was called. We'll keep watching.", closes in 3 s. |
 | Contacting | `page/result?type=sos` | Initials avatar, contact name, live status of the `sos.send` request, **Done**. |
@@ -160,9 +170,19 @@ Interactions the design leaves implicit:
 
 - Home: **tap the ring** to pause/resume monitoring, **swipe up** for
   Sensitivity, **long-press the ring** to replay a synthetic fall (`DEBUG`).
+- Monitor mode (§10.5): 20 s after the last interaction Home hides
+  everything and drops the brightness — black OLED. **Tap anywhere** or
+  **raise the wrist** to see it again. Leaving the app (side button) or an
+  OS kill brings Home back within 90 s by itself; **pausing** (tap the ring
+  while awake) is the only thing that switches that off.
 - Alert: swipes are swallowed during the countdown so a gesture can't dismiss it.
 - Navigation through the alert flow is `replace()` end-to-end
   (`index → alert → result → index`), so every page is built fresh.
+- Sensitivity is `push()`ed on top of Home instead, so Home stays alive
+  underneath. API 3.0 pages have no `onResume`, so Home re-reads the stored
+  sensitivity in its 1 s tick and rebuilds the detector when it changed
+  (`[detector] rebuilt for sensitivity …` in the log); an evaluation in
+  progress is left to finish first.
 
 Design → Zepp OS mapping:
 
@@ -182,8 +202,8 @@ straight from the layout files (no simulator needed) — check it after moving
 anything.
 
 Not wired yet: the **siren** toggle persists but no audio plays (needs an
-audio asset + `@zos/media`); `contactName` is read from `@zos/storage` and
-will be filled by the phone settings app (Step 7).
+audio asset + `@zos/media`). `contactName` is read from `@zos/storage`; the
+phone settings page (Step 7) pushes it there through the app-side.
 
 ---
 
@@ -257,7 +277,9 @@ permissions and naming — it is the file checked in at the repo root.
     "device:os.accelerometer",
     "device:os.gyroscope",
     "device:os.notification",
-    "device:os.local_storage"
+    "device:os.local_storage",
+    "device:os.alarm",
+    "device:os.bg_service"
   ],
   "runtime": {
     "apiVersion": { "compatible": "3.0.0", "target": "3.0.0", "minVersion": "3.0" }
@@ -265,7 +287,8 @@ permissions and naming — it is the file checked in at the repo root.
   "targets": {
     "default": {
       "module": {
-        "page": { "pages": ["page/index", "page/alert", "page/result", "page/settings"] },
+        "page": { "pages": ["page/index", "page/alert", "page/result", "page/settings", "page/probe"] },
+        "app-service": { "services": ["app-service/probe"] },
         "app-side": { "path": "app-side/index" },
         "setting": { "path": "setting/index" }
       },
@@ -294,6 +317,12 @@ permissions and naming — it is the file checked in at the repo root.
   **Amazfit Active** is square, 390×450, API_LEVEL 3.6) and
   `assets/default.<st>/icon.png`.
 - `module.page.pages` must list **every** page you navigate to.
+- `module.app-service.services` lists the **device** background services
+  (§10); `device:os.bg_service` is the matching permission and is also
+  requested at runtime with `requestPermission` before `start()`.
+- `device:os.alarm` is for the monitor-mode relaunch alarm (§10.5);
+  `utils/monitor-mode.js` also asks for it with `requestPermission` if
+  `queryPermission` reports it as not granted.
 - `appId` / `vender` are placeholders assigned by the CLI; `zeus login` +
   the developer console give you real ones before publishing.
 
@@ -406,21 +435,33 @@ What the page does:
 1. `onInit` — `setWakeUpRelaunch({ relaunch: true })` so a screen wake returns
    here instead of the watch face; builds the detector and logs every
    candidate as `[fall-candidate] {...}` for tuning.
-2. `startMonitoring()` (auto on open, or via the Start/Stop button) — creates
-   `Wear` + `Accelerometer`, `setFreqMode(FREQ_MODE_NORMAL)`, `start()`, then
-   `setPageBrightTime({ brightTime: 2147483000 })` and
-   `pauseDropWristScreenOff({ duration: 0 })` to keep the page alive.
-3. `onSample()` — reads `getCurrent()`, updates the live `g` value and a sample
-   counter, and feeds the detector unless `Wear.getStatus() === 0` (not worn).
-   A wear-off also `reset()`s the detector so a half-seen fall can't span a gap.
-4. A 250 ms UI timer shows `1.02 g · 48 Hz · IDLE` — the **measured sample
-   rate**, which answers the first unknown in §8. Widgets are never touched
-   per sample.
-5. `onFall` — stops the sensor, restores screen behaviour, sets the status to
-   "Fall detected" and `push({ url: 'page/alert', params: JSON.stringify(evt) })`.
-6. `stopMonitoring()` / `onDestroy` — `offChange()` + `stop()` on both sensors,
-   clears the timer, `resetPageBrightTime()`, `resetDropWristScreenOff()`.
-7. Debug button "Simulate fall" (`DEBUG = true` at the top of the file) replays
+2. `startMonitoring()` (auto on open, or by tapping the ring while awake) —
+   creates `Wear` + `Accelerometer`, `setFreqMode(FREQ_MODE_NORMAL)`,
+   `start()`, then `setPageBrightTime({ brightTime: 2147483000 })` and
+   `pauseDropWristScreenOff({ duration: 0 })` to keep the page alive, and
+   arms the relaunch alarm (§10.5).
+3. `onSample()` — reads `getCurrent()`, counts the sample for the rate /
+   coverage stats, and feeds the detector unless `Wear.getStatus() === 0`
+   (not worn). A wear-off also `reset()`s the detector so a half-seen fall
+   can't span a gap.
+4. A 1 s `tick()` rolls the coverage ring (share of 5 s buckets that had
+   samples while worn, over the last 5 min), logs `[rate] NN Hz` every 5 s
+   when `DEBUG` — the **measured sample rate**, first unknown in §8 — and
+   re-reads the stored sensitivity, rebuilding the detector if Settings
+   changed it (that page is `push`ed on top, so Home never gets a fresh
+   `onInit`), dims/undims the screen and re-arms the relaunch alarm every
+   30 s (§10.5). Widgets are never touched per sample — except that every
+   sample also feeds `utils/raise-detector.js`, which wakes a dimmed screen.
+5. `onFall` — disarms the relaunch alarm (the alert flow returns here by
+   itself), wakes the screen, stops the sensor, sets the title to "Fall
+   detected" and `replace({ url: 'page/alert', params: JSON.stringify(evt) })`.
+6. `stopMonitoring()` / `onDestroy` — `offChange(cb)` + `stop()` on both
+   sensors (the same function objects that went into `onChange` — the typings
+   require the callback), clears the timer, `resetPageBrightTime()`,
+   `resetDropWristScreenOff()`, restores brightness; `onDestroy` also
+   `offGesture()`s but leaves the relaunch alarm armed — only `pause()` (the
+   wearer's tap) disarms it.
+7. Long-pressing the ring (`DEBUG = true` at the top of the file) replays
    `DEMO_FALL` from `utils/demo-trace.js` straight into the detector, so the
    whole flow can be exercised in the simulator where there is no sensor data.
 
@@ -556,21 +597,28 @@ the alert caption updates without reopening the app.
 
 Strings live in `setting/i18n/en-US.po` (`gettext`).
 
-### Step 8 — Test in the simulator with synthetic data
+### Step 8 — Test in the simulator with synthetic data  ✅ done
 
-The simulator returns no real accelerometer motion, so add a debug button on
-`page/index` (only when `app.json` has `"debug": true`) that replays a fixture:
+The simulator returns no real accelerometer motion, so the algorithm is
+exercised two ways:
 
-```js
-import fall from '../test/fixtures/fall_forward.json'   // [{dt, x, y, z}, …]
-let t = Date.now()
-fall.forEach(s => { t += s.dt; this.state.detector.push(t, s.x, s.y, s.z) })
+- **Under Node:** `npm test` runs the state-machine tests plus one test per
+  fixture in `test/fixtures/` — `fall_forward`, `fall_sideways` must fire
+  exactly once; `adl_clap`, `adl_sit_down_hard`, `adl_running`,
+  `adl_fall_then_get_up` never (see Step 3).
+- **In the simulator / on the watch:** long-press the ring on Home. With
+  `DEBUG = true` (`page/index.js`) it replays `DEMO_FALL` from
+  `utils/demo-trace.js` — the same synthetic `fall_forward` trace, written by
+  `npm run fixtures` — straight into the detector, so the whole
+  `index → alert → result → index` flow runs without sensor data.
+
+```bash
+open -a simulator      # Zepp OS Simulator, then pick a device in its window
+zeus dev               # installs to the simulator and hot-reloads on save
 ```
 
-Also unit-test the detector under Node (`node --test test/`) with fixtures for:
-a forward fall, a sideways fall, sitting down hard, clapping, running, and
-putting the watch on a table. Assert exactly one `fall` for the first two and
-none for the rest.
+What the simulator *can't* tell you: the real sample rate, whether the
+accelerometer survives screen-off, vibration, or BLE timing — that's Step 9.
 
 ### Step 9 — Test on a real watch and tune
 
@@ -626,10 +674,9 @@ shows `app-side/`. Stop collection before reading — the viewer buffers.
 
 #### 9e. What to check, in order
 
-1. **It runs.** Open the app on the watch: green ring, "You're covered",
-   *Last check: Just now*. The Device App log prints `[rate] NN Hz` every
-   5 s — that is the real `FREQ_MODE_NORMAL` rate on this hardware (README
-   §8, first unknown).
+1. **It runs.** Open the app on the watch: green ring, "You're covered".
+   The Device App log prints `[rate] NN Hz` every 5 s — that is the real
+   `FREQ_MODE_NORMAL` rate on this hardware (README §8, first unknown).
 2. **Wear gate.** Take the watch off: title → "Not on wrist", ring turns
    red. Put it back.
 3. **Simulate fall.** Long-press the ring: the "Are you alright?" page
@@ -639,6 +686,11 @@ shows `app-side/`. Stop collection before reading — the viewer buffers.
    app come back (setWakeUpRelaunch)? Did the Hz counter keep running
    while dark? This answers §8's second unknown and decides whether
    `KEEP_BRIGHT_MS` can be shortened to save battery.
+4b. **Settings round-trip.** Swipe up, pick *Watchful*, swipe back: within a
+   second the log shows `[detector] rebuilt for sensitivity watchful`. While
+   on the Sensitivity page, swipe up once more — if a *second* Sensitivity
+   page opens, `onGesture` handlers are app-global rather than per-page and
+   Home's handler needs guarding (the docs don't say which it is).
 5. **Real falls.** Onto a mattress, wrist-worn, 5–10 reps each of forward,
    backward and sideways, plus a sitting-to-floor slump. Then ADLs: sit down
    hard, clap, drop the arm onto a table, run 30 s, put the watch on a table.
@@ -653,6 +705,19 @@ shows `app-side/`. Stop collection before reading — the viewer buffers.
 7. **Battery.** Leave it monitoring for a full day and note the drain; if
    unacceptable, drop to `FREQ_MODE_LOW` and re-tune, or shorten
    `KEEP_BRIGHT_MS` if step 4 showed the sensor survives screen-off.
+8. **Background probe.** Swipe down on Home → *Start* → follow §10.3 and
+   fill in the results table there.
+9. **Monitor mode** (§10.5). Leave the watch alone for 20 s: the screen goes
+   black. Tap: it comes back. Let it dim again, lower the arm, raise it:
+   it comes back (log `[g]` lines keep flowing throughout — the sensor
+   never stopped). Press the side button to leave the app and start a
+   stopwatch: Home should reopen by itself within 90 s and the Device App
+   log shows `app on create invoke "relaunch"`. Tap the ring to pause, leave
+   the app: it must **not** come back. Swipe up/down must still open
+   Settings / the probe (a full-screen rect sits under the widgets to catch
+   taps). Finally check the watch face brightness is what it was before
+   (`[monitor] restored …` in the log means a previous run had left it
+   dimmed).
 
 ### Step 10 — Build and ship
 
@@ -666,19 +731,25 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
 
 ## 6. Runtime flow (happy path)
 
-1. User opens app → taps Start → permission prompt for accelerometer (once).
+1. User opens app → monitoring starts (no runtime permission prompt —
+   `device:os.accelerometer` is static, see Step 4).
 2. Page keeps running; detector consumes samples at `FREQ_MODE_NORMAL`.
-3. Fall signature matched → `push('page/alert')`, sensor stopped.
+3. Fall signature matched → `replace('page/alert')`, sensor stopped.
 4. Watch vibrates in `VIBRATOR_SCENE_CALL` pattern, 30 s countdown shown.
-5. a) "I'm OK" → back to monitoring. b) Timeout or "Send SOS" →
-   `request('sos.send')` over BLE → app-side `fetch` → webhook → SMS/call.
-6. Result shown on watch ("SOS sent" / "No phone connection").
+5. a) "I'm fine" → "Glad you're OK" → back to monitoring. b) Timeout or
+   "Get help now" → `page/result` → `request('sos.send')` over BLE →
+   app-side `fetch` → webhook → the relay calls the contact.
+6. Result shown on watch ("Alert sent" / "Alert could not be sent" /
+   "Phone not reachable").
 
 ## 7. Known limitations
 
 - **Foreground only.** Zepp OS forbids the accelerometer in background
   services, so detection stops when the user leaves the app or the OS reclaims
-  the page. Communicate this clearly in the UI.
+  the page. Monitor mode (§10.5) narrows the gap to ≤ 90 s and keeps the
+  screen black meanwhile, but the app still owns the watch while it runs.
+  §10 has the full research and a probe that measures what a service *can*
+  do on your firmware.
 - **No phone = no outbound alert.** BLE range to the phone is required for the
   SOS. Consider an on-watch fallback such as a loud `notify()` plus repeating
   vibration until dismissed.
@@ -705,7 +776,147 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
 - Replace the threshold state machine with a small decision tree trained on
   your recorded fixtures — the `push(t,x,y,z)` interface stays the same.
 
-## 10. Documentation links
+## 10. Background monitoring — research and probe (2026-09-17)
+
+**Question:** can detection + vibration run with the app closed and the
+screen off?
+
+**Verdict from the docs: not with the accelerometer.** Zepp OS has exactly
+one background mechanism for mini programs, the *App Service*
+(`@zos/app-service`, API_LEVEL 3.0), and its capability table
+(<https://docs.zepp.com/docs/guides/framework/device/app-service/>) says:
+
+| Capability | In a service | Doc wording |
+|---|---|---|
+| Timers (`setTimeout` …) | **NO** | "Timer related interfaces such as `setTimeout`" |
+| `@zos/ui` | **NO** | "No UI for Device App" |
+| `Accelerometer`, `Gyroscope`, `Geolocation` | **NO** | "Unable to use high power consumption interfaces" |
+| Other sensors (`HeartRate`, `Time.onPerMinute`, `Wear`, `Screen` …) | YES | |
+| `@zos/notification`, `@zos/media` audio, `@zos/ble` (non-`mst`) | YES | |
+| `@zos/fs` writes | YES | "only when the screen is off or in AOD display mode" |
+| `@zos/app` / `display` / `device` / `settings` / `user` | `get*` only | |
+
+Other facts that shape the answer:
+
+- A page is not an alternative: "the system will exit the Mini Program after
+  10 s" once the screen is off (`setWakeUpRelaunch` reference). Today's
+  design therefore keeps the screen **on** (`setPageBrightTime` +
+  `pauseDropWristScreenOff`) — that is the battery cost, and it is the only
+  documented way to keep sampling.
+- Nothing changed later: the API_LEVEL 4.0 / 4.2 feature lists add
+  `@zos/timer createSysTimer` ("runs regardless of watch screen state",
+  services allowed, 4.0+) but do not lift the sensor restriction, and
+  `@zeppos/device-types@4.0.0` exposes the same sensor list as 3.0 — there
+  is no system "fall detected" event a third-party app could subscribe to.
+- Newer Amazfit firmware has **native fall detection** in the system SOS
+  settings. It is the right answer for users who just need the feature; it
+  has no API, so this app can't build on it.
+- A service *can* survive app exit, screen-off and reboot, vibrate, post
+  notifications, play audio and talk BLE — enough for a watchdog ("Fall
+  Guard isn't monitoring — open the app") or an alarm siren, not for
+  detection.
+
+### 10.1 What the probe MVP proves
+
+Docs tables are sometimes stricter than firmware, and "NO" doesn't say
+*how* it fails, so `app-service/probe.js` measures it on the real watch:
+
+| # | Question | Evidence on the probe page |
+|---|---|---|
+| 1 | Does a service stay alive with the app closed and the screen off? | `beats` keeps growing (`Time.onPerMinute`), `screen: off Nx` |
+| 2 | Does the accelerometer deliver samples in a service — and after screen-off? | `accel: ok · N samples · N/min` vs `accel: error: …`; `samples since off` |
+| 3 | Does vibration work from the background? | the first 3 minute-beats buzz (`HEARTBEAT_BUZZES`) — felt with the app closed |
+| 4 | Do notifications work from a service? | `notify: ok (#id)` + the notification itself |
+| 5 | Which store can a service write? | `store: localStorage` / `fs` / `none`, `errors` |
+| 6 | Control: does a low-power sensor work? | `hr: 72 (N)` (`HeartRate.onCurrentChange`) |
+
+If any samples arrive, the service runs the real `createFallDetector()` on
+them and a background fall buzzes + notifies (`falls: N`). If #2 says
+*error*, the platform answer is final and the production design stays
+foreground-only.
+
+### 10.2 How it is built
+
+- `app.json`: `permissions` += `device:os.bg_service`;
+  `module.app-service.services = ["app-service/probe"]`; page `page/probe`.
+- `app-service/probe.js` — `AppService({ onInit, onDestroy })`. No timers, so
+  everything runs inside sensor callbacks: `Time.onPerMinute` heartbeat,
+  `Screen.onChange`, `Wear.onChange`, `HeartRate.onCurrentChange`, and the
+  `Accelerometer` attempt wrapped in try/catch (`accel.ctor` / `accel.start`
+  record the outcome). `Vibrator` + `notify()` run at start. The notification
+  button re-enters the service with `param: 'ack'`, which just `exit()`s.
+- `utils/probe-store.js` — one JSON record; `save()` tries `localStorage`
+  then `@zos/fs`, records which worked. Flushes on every beat/event and on
+  accelerometer sample 1 / 10 / 100 / 1000.
+- `page/probe.js` (+ `.r/.s.layout.js`) — swipe **down** on Home (`DEBUG`).
+  *Start* checks `queryPermission`, calls `requestPermission` (system
+  dialog), clears the record and `start()`s the service; *Stop* calls
+  `stop()`. `getAllAppServices()` says whether it is running; the record is
+  re-read every second.
+
+### 10.3 Protocol (real watch — the simulator has no services or sensors)
+
+1. Install (Step 9b/9c), open Fall Guard, swipe down, tap **Start**, accept
+   the background-service permission dialog. Expect one buzz and a
+   "Background probe started" notification.
+2. Press the side button to leave the app. Let the screen go off. Wait
+   3–4 minutes without touching the watch (the first three minute-beats
+   buzz — count them).
+3. Raise the wrist, reopen Fall Guard, swipe down, read the rows, and check
+   the Device App log (9d) for `[probe] beat …` lines.
+4. Optional: with the app closed, drop the watch onto a cushion from arm
+   height. If the accelerometer works, `falls` increments and the watch
+   buzzes + notifies.
+5. Tap **Stop**.
+
+Results (fill in):
+
+| Watch / firmware / API_LEVEL | beats after 3 min | accel ctor / start | samples · /min · since off | buzzes felt | notify | store | notes |
+|---|---|---|---|---|---|---|---|
+| | | | | | | | |
+
+### 10.4 What to do with the outcome
+
+- **Accelerometer works in the service** (unlikely per docs): move
+  `page/index` sampling into the service, keep the page as the UI, have the
+  service `notify()` + vibrate on a fall and the page take over when opened.
+  Watch battery for a day.
+- **Accelerometer refused, service otherwise fine** (expected): keep
+  foreground detection, add a *watchdog* service that buzzes/notifies when
+  monitoring stops (screen-off kill, app exit) so the wearer knows they are
+  uncovered, and optionally an audio siren via `@zos/media`.
+- **Service itself dies on screen-off**: nothing to gain from services on
+  this firmware; the keep-screen-on design stands.
+
+### 10.5 Option 1 — monitor mode (implemented 2026-09-18)
+
+Since the platform answer is "foreground only", the foreground is made to
+behave like a background service. All of it is documented page-level API;
+nothing here depends on the probe's outcome.
+
+| Piece | Where | How |
+|---|---|---|
+| Black screen | `page/index.js` `tick()`, `utils/monitor-mode.js` `dim()` | 20 s (`AWAKE_MS`) after the last interaction Home sets every widget `VISIBLE: false` — a black OLED draws almost nothing — and lowers brightness to `DIM_BRIGHTNESS` (5) via `setAutoBrightness(false)` + `setBrightness()`. The previous values are saved in memory and in `localStorage` (`display.saved`); `restoreDisplay()` in `onInit` undoes a dim that a crash or kill never got to undo. |
+| Wake | full-screen black `FILL_RECT` under everything; `utils/raise-detector.js` | A tap anywhere calls `wake()`. Every accelerometer sample also feeds the raise detector: once the watch has been away from face-up (z/‖a‖ < 0.5 for 300 ms) and comes back face-up (≥ 0.8 for 300 ms) the screen wakes — one raise, one wake; a watch lying face-up never fires. `npm test` covers it. |
+| Shared "awake" deadline | `keepAwake()` / `isAwake()` in `getApp().globalData` | Settings is pushed on top of Home, and Home's tick would dim underneath it; Settings bumps the deadline on build and every tap instead of Home needing an `onResume`. |
+| Clock | `L.CLOCK`, `Time.getFormatHour()` | Home is the wearer's screen all day, so it shows the time when awake. |
+| Dead-man's switch | `armRelaunch()` / `disarmRelaunch()`; `@zos/alarm set({ url: 'page/index', delay: 90, repeat_type: REPEAT_ONCE, param: 'relaunch' })` | Home arms on start and re-arms every 30 s (`REARM_MS`), always setting the new alarm before cancelling the old one. If the wearer presses the side button or the OS kills the page, the pending alarm opens Home ≤ 90 s later and `AUTO_START` resumes monitoring. `onFallDetected` disarms first (the alert flow returns by itself); `pause()` — a tap on the ring while awake — is the only user action that disarms. `app.js` logs `app on create invoke "relaunch"` when the alarm was the launcher. |
+
+To verify on hardware (9e-9): that brightness `5` with hidden widgets is
+really black on your panel (try `0` if not — and check the app isn't
+treated as screen-off and killed), that the alarm relaunch is quiet enough
+to live with, and the raise thresholds on your wrist. Then the number that
+decides whether this is shippable: **battery over a day** with the sensor at
+`FREQ_MODE_NORMAL`; if it's too much, `FREQ_MODE_LOW` is the next lever (the
+detector windows are in ms, `npm test` has a 25 Hz case).
+
+Known trade-offs: the app owns the watch while monitoring (the system watch
+face is not shown; the clock line is the substitute); a palm-over-screen
+still turns the screen off and the app is killed 10 s later, then relaunched
+by the alarm; a relaunch while the watch is off the wrist (charging) is
+harmless but pointless — pause before charging if it bothers you.
+
+## 11. Documentation links
 
 - app.json reference — <https://docs.zepp.com/docs/reference/app-json/>
 - Accelerometer — <https://docs.zepp.com/docs/reference/device-app-api/newAPI/sensor/Accelerometer/>
@@ -714,6 +925,8 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
 - Vibrator — <https://docs.zepp.com/docs/reference/device-app-api/newAPI/sensor/Vibrator/>
 - Display: setPageBrightTime / pauseDropWristScreenOff / setWakeUpRelaunch — <https://docs.zepp.com/docs/reference/device-app-api/newAPI/display/setPageBrightTime/>
 - App Service guide (background limits) — <https://docs.zepp.com/docs/guides/framework/device/app-service/>
+- `@zos/timer` createSysTimer (4.0+, services) — <https://docs.zepp.com/docs/reference/device-app-api/newAPI/timer/createSysTimer/>
+- `@zos/app-service` stop / getAllAppServices — <https://docs.zepp.com/docs/reference/device-app-api/newAPI/app-service/stop/>
 - `@zos/app-service` start — <https://docs.zepp.com/docs/reference/device-app-api/newAPI/app-service/start/>
 - `@zos/app` requestPermission — <https://docs.zepp.com/docs/reference/device-app-api/newAPI/app/requestPermission/>
 - `@zos/notification` notify — <https://docs.zepp.com/docs/reference/device-app-api/newAPI/notification/notify/>

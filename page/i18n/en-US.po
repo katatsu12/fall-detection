@@ -87,3 +87,15 @@ msgstr "May ask more often"
 
 msgid "settings.siren"
 msgstr "Watch siren"
+
+msgid "probe.title"
+msgstr "Background probe"
+
+msgid "probe.start"
+msgstr "Start"
+
+msgid "probe.stop"
+msgstr "Stop"
+
+msgid "probe.hint"
+msgstr "Start, leave the app, let the screen sleep 3 min, come back."

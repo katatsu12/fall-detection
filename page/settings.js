@@ -1,7 +1,8 @@
 /**
  * Sensitivity — "How careful?" (design 2A). Reached by swiping up on Home.
  * Three levels named by behaviour, plus the siren toggle. Persists via
- * utils/prefs; Home rebuilds its detector from the stored value on return.
+ * utils/prefs; Home (still alive underneath, since this page is pushed) polls
+ * the stored value in its tick and rebuilds its detector when it changes.
  */
 import { createWidget, widget, prop, align, event } from '@zos/ui'
 import { getText } from '@zos/i18n'
@@ -9,6 +10,9 @@ import { BasePage } from '@zeppos/zml/base-page'
 import * as L from 'zosLoader:./settings.[pf].layout.js'
 import { COLOR } from '../utils/theme'
 import { getPref, setPref, SENSITIVITY } from '../utils/prefs'
+import { keepAwake } from '../utils/monitor-mode'
+
+const AWAKE_MS = 20000 // Home is alive underneath and dims when nobody interacts — keep it lit while here
 
 const LEVELS = [
   { id: SENSITIVITY.RELAXED, label: 'settings.relaxed', sub: 'settings.relaxed_sub' },
@@ -27,6 +31,7 @@ Page(
     },
 
     build() {
+      keepAwake(AWAKE_MS)
       createWidget(widget.TEXT, {
         ...L.TITLE,
         text: getText('settings.title'),
@@ -70,12 +75,14 @@ Page(
     },
 
     select(id) {
+      keepAwake(AWAKE_MS)
       this.state.sensitivity = id
       setPref('sensitivity', id)
       this.render()
     },
 
     setSiren(v) {
+      keepAwake(AWAKE_MS)
       this.state.siren = v
       setPref('siren', v)
       this.render()

@@ -66,6 +66,7 @@ for shape in ['r', 's']:
     l = L[f'index.{shape}']; im, d = canvas(shape)
     arc(d, l['RING'], C['track'], 270); arc(d, l['RING'], C['green'], l['RING']['start_angle'] + 360 * 0.88)
     rrect(d, l['DISC'], C['bg']); icon(d, l['SHIELD']); txt(d, l['TITLE'], "You're covered", C['text'])
+    txt(d, l['CLOCK'], '14:32', C['muted'])
     save(im, 'home', shape)
 
     l = L[f'alert.{shape}']; im, d = canvas(shape)
@@ -85,7 +86,7 @@ for shape in ['r', 's']:
     save(im, 'result-ok', shape)
     im, d = canvas(shape)
     txt(d, l['SOS_HEADER'], 'CONTACTING', C['redSoft']); circ(d, l['SOS_AVATAR'], C['avatar']); txt(d, l['SOS_INITIALS'], 'AR', C['textSoft'])
-    txt(d, l['SOS_NAME'], 'Anna Reyes', C['text']); txt(d, l['SOS_STATUS'], 'Alert sent · location shared', C['green'])
+    txt(d, l['SOS_NAME'], 'Anna Reyes', C['text']); txt(d, l['SOS_STATUS'], 'Alert sent', C['green'])
     rrect(d, l['SOS_DONE'], C['card']); txt(d, l['SOS_DONE'], 'Done', C['redSoft'])
     save(im, 'result-sos', shape)
 
