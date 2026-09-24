@@ -2,7 +2,7 @@
 export const COLOR = {
   bg: 0x000000,
   white: 0xffffff,
-  ink: 0x101113, // text on the white "I'm fine" pill
+  ink: 0x101113, // text on the white OK pill
   text: 0xffffff,
   textSoft: 0xe8e9eb,
   caption: 0xc6c9ce,

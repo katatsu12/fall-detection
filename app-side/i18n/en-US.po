@@ -1,2 +1,0 @@
-# No app-side strings yet; the side service has no UI.
-# Add msgid/msgstr pairs here when the app-side needs gettext().

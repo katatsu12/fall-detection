@@ -6,9 +6,7 @@
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
     "fixtures": "node test/helpers/make-fixtures.js",
-    "mocks": "python3 tools/render-mocks.py",
-    "webhook": "node tools/webhook-dev-server.js",
-    "eval": "node tools/eval.js"
+    "mocks": "python3 tools/render-mocks.py"
   },
   "author": "",
   "license": "ISC",

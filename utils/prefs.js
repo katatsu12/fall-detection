@@ -1,6 +1,6 @@
 /**
- * Device-side preferences. Persisted in @zos/storage localStorage; the phone
- * settings app (README Step 7) pushes contactName here through the app-side.
+ * Device-side preferences, persisted in @zos/storage localStorage and set on
+ * the watch's Sensitivity page (page/settings).
  */
 import { localStorage } from '@zos/storage'
 import { PRESETS } from './fall-detector'
@@ -14,7 +14,6 @@ const PRESET_FOR = {
 }
 
 const DEFAULTS = Object.freeze({
-  contactName: '',
   sensitivity: SENSITIVITY.BALANCED,
   siren: true,
 })
@@ -37,26 +36,4 @@ export function getPrefs() {
 /** Detector options for the stored sensitivity. */
 export function detectorOptions() {
   return PRESET_FOR[getPref('sensitivity')] || PRESET_FOR[SENSITIVITY.BALANCED]
-}
-
-/** Apply prefs received from the phone (app-side `prefs.get` / `prefs.update`). */
-export function applyRemotePrefs(remote) {
-  if (!remote || typeof remote !== 'object') return
-  if (typeof remote.contactName === 'string') setPref('contactName', remote.contactName)
-}
-
-export function firstName(name) {
-  return String(name || '')
-    .trim()
-    .split(/\s+/)[0]
-}
-
-export function initials(name) {
-  return String(name || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0].toUpperCase())
-    .join('')
 }

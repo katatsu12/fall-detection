@@ -10,7 +10,7 @@
     },
     "icon": "icon.png",
     "vender": "zepp",
-    "description": "Detects falls and alerts an emergency contact"
+    "description": "Detects falls and alerts you with vibration"
   },
   "permissions": [
     "device:os.accelerometer",
@@ -34,22 +34,14 @@
           "pages": [
             "page/index",
             "page/alert",
-            "page/result",
             "page/settings",
-            "page/probe",
-            "page/record"
+            "page/probe"
           ]
         },
         "app-service": {
           "services": [
             "app-service/probe"
           ]
-        },
-        "app-side": {
-          "path": "app-side/index"
-        },
-        "setting": {
-          "path": "setting/index"
         }
       },
       "platforms": [

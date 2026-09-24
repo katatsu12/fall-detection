@@ -1,15 +1,30 @@
 # Fall Guard — Zepp OS Mini Program
 
 **Fall Guard** is a Zepp OS app that watches the wrist-worn accelerometer for the signature of a
-human fall (free-fall → impact → stillness), vibrates and asks "Are you OK?",
-and — if the wearer doesn't respond — forwards an SOS through the phone to an
-emergency contact.
+human fall (free-fall → impact → stillness) and vibrates the watch until the
+wearer taps OK.
 
 > **Safety note.** A wrist-worn, threshold-based detector will miss some falls
 > and will raise some false alarms (clapping, sitting down hard, dropping the
 > arm onto a table). Treat this as an assistive tool, not a medical device.
 > Newer Amazfit devices ship a native fall-detection feature in system settings;
 > this project is a third-party implementation for learning and customisation.
+
+## MVP scope (2026-09-24)
+
+This version exists to prove the detector on a real wrist. A detected fall
+opens a "Fall detected" screen that vibrates until you tap OK, or for 30 s
+at most, and then monitoring resumes. Nothing leaves the watch: there is no
+phone-side service and no phone settings page.
+
+| Deferred | Where it is |
+|---|---|
+| SOS: 30 s countdown, "Get help now", phone relay to a webhook, emergency contact, phone settings page | Removed. The last version without the recorder is commit `b47079a`: `page/alert.js`, `page/result.*`, `app-side/`, `setting/`, `tools/webhook-dev-server.js`, `check.png` |
+| Phase 0–1 recorder, staged recordings, uploads, `npm run eval` | Branch `phase1-recording` (commit `fdecfa0`, reverted on `main`) |
+| Detector v2 | The plan doc; v1 (`utils/fall-detector.js`) makes every decision |
+
+Steps 5–7 and §6 below describe the MVP. Earlier SOS details live in the
+git history.
 
 ---
 
@@ -103,18 +118,15 @@ doesn't need it.
 │  utils/fall-detector.js  ── pure state machine (no zOS deps)   │
 │      │  emits 'fall'                                           │
 │      ▼                                                         │
-│  page/alert.js  ── vibrate, 30 s countdown, I'm fine / Get help│
-│      │  replace() on timeout or "Get help now"                 │
-│      ▼                                                         │
-│  page/result.js ── zml this.request({ method: 'sos.send' })    │
-│      │                          page/settings.js ── sensitivity│
-└──────┼─────────────────────────────────────────────────────────┘
-       │ BLE
-┌──────▼───────────── Phone (app-side service) ──────────────────┐
-│  app-side/index.js ── onRequest → fetch(POST webhook/Twilio)   │
-│  setting/index.js  ── emergency contact, webhook URL + token   │
+│  page/alert.js  ── vibrate until OK (max 30 s)                 │
+│      │  replace() back to page/index → monitoring resumes      │
+│                                                                │
+│  page/settings.js ── sensitivity (push()ed on top of Home)     │
 └────────────────────────────────────────────────────────────────┘
 ```
+
+MVP: no phone side. The SOS path (page/result → app-side → webhook) is
+removed until later; see "MVP scope" above.
 
 Project layout (the directory and git repo keep the name `fall-detection`;
 the app itself is called **Fall Guard**):
@@ -127,11 +139,9 @@ fall-detection/
 ├── assets/<device>/       # icon.png per target
 ├── page/
 │   ├── index.js  index.{r,s}.layout.js      # Home: ring + facts, sensor wiring
-│   ├── alert.js  alert.{r,s}.layout.js      # "Are you alright?" countdown
-│   ├── result.js result.{r,s}.layout.js    # "Glad you're OK" / "Contacting"
+│   ├── alert.js  alert.{r,s}.layout.js      # "Fall detected": vibrate until OK
 │   ├── settings.js settings.{r,s}.layout.js # "How careful?" sensitivity
-│   ├── probe.js  probe.{r,s}.layout.js      # background probe (developer screen, §10)
-│   └── record.js record.{r,s}.layout.js    # staged recordings + rates (developer screen, §12)
+│   └── probe.js  probe.{r,s}.layout.js      # background probe (developer screen, §10)
 ├── utils/
 │   ├── fall-detector.js   # algorithm (unit-testable in Node)
 │   ├── prefs.js           # localStorage-backed settings + sensitivity → presets
@@ -139,28 +149,13 @@ fall-detection/
 │   ├── raise-detector.js  # raise-to-wake from the accel stream (pure, tested)
 │   ├── probe-store.js     # record shared by the probe service and its page
 │   ├── theme.js           # palette from the design
-│   ├── demo-trace.js      # generated synthetic fall for the debug replay
-│   ├── debug.js           # DEBUG switch, recorder on/off, frequency-mode override (§12)
-│   ├── ring-buffer.js     # typed-array sample history (pure, tested; v2 reuses it)
-│   ├── impact-trigger.js  # the 1.8 g candidate trigger (pure, tested; v2 reuses it)
-│   ├── candidate-recorder.js # windows around impacts, keep policy (pure, tested)
-│   ├── rate-meter.js      # sensor rate + jitter (pure, tested)
-│   ├── uploader.js        # one upload at a time with backoff (pure, tested)
-│   ├── recording-store.js # recordings, labels, day summaries in /data/rec
-│   └── recorder-session.js # recorder state shared across pages via globalData
-├── tools/
-│   ├── render-mocks.py    # layout → PNG mocks (npm run mocks)
-│   ├── webhook-dev-server.js # SOS test receiver + recording sink (npm run webhook)
-│   └── eval.js eval-lib.js   # npm run eval (§12.6)
-├── eval/report.json       # latest evaluation report, committed with detector changes
+│   └── demo-trace.js      # generated synthetic fall for the debug replay
+├── tools/render-mocks.py  # layout → PNG mocks (npm run mocks)
 ├── app-service/probe.js   # device background service: feasibility probe (§10)
-├── app-side/index.js      # SOS forwarding via fetch(), recording upload
-├── setting/index.js       # settings UI on the phone
-├── data/                  # recordings and public datasets (git-ignored)
 └── test/
-    ├── fall-detector.test.js  raise-detector.test.js
-    ├── ring-buffer, impact-trigger, candidate-recorder, rate-meter, uploader, eval .test.js
-    └── fixtures/*.json    # synthetic accel traces (falls / ADLs)
+    ├── fall-detector.test.js
+    ├── raise-detector.test.js
+    └── fixtures/*.json    # recorded accel traces (real falls / ADLs)
 ```
 
 ---
@@ -169,15 +164,14 @@ fall-detection/
 
 Source: Claude Design project *Fall Detection App Interface* →
 `Fall Guard - Zepp OS.dc.html`, section **2A** ("Warm tone, two escalation
-steps, both screen shapes"). Four screens × round 480 and square 390×450.
-The SOS-sent state, which 2A doesn't cover, adapts 1A's "Contacting" screen.
+steps, both screen shapes"), round 480 and square 390×450. The MVP keeps
+three screens; the design's countdown, "Glad you're OK" and "Contacting"
+screens return with SOS.
 
 | Screen | Page | What's on it |
 |---|---|---|
 | Home — "You're covered" | `page/index` | Simplified from the design: a single coverage ring with the shield, centred, the state title beneath it (covered / paused / not on wrist) and a clock line above, since in monitor mode this screen *is* the wearer's watch face. The three info rows were dropped on 2026-09-16. |
-| Fall detected — "Are you alright?" | `page/alert` | Red countdown ring, "We'll call {contact}, then emergency services", white **I'm fine** pill, **Get help now** link. |
-| Confirmed — "Glad you're OK" | `page/result?type=ok` | Green check disc, "Nobody was called. We'll keep watching.", closes in 3 s. |
-| Contacting | `page/result?type=sos` | Initials avatar, contact name, live status of the `sos.send` request, **Done**. |
+| Fall detected | `page/alert` | Red glow, "Fall detected", the time, what the detector saw ("peak 3.4 g · 290 ms free fall"), "Vibration stops in 28s", white **OK** pill. Vibrates until OK, 30 s at most. |
 | Sensitivity — "How careful?" | `page/settings` | Relaxed / Balanced / Watchful radio rows (→ `PRESETS.low/normal/high`), *Watch siren* toggle. |
 
 Interactions the design leaves implicit:
@@ -189,9 +183,9 @@ Interactions the design leaves implicit:
   **raise the wrist** to see it again. Leaving the app (side button) or an
   OS kill brings Home back within 90 s by itself; **pausing** (tap the ring
   while awake) is the only thing that switches that off.
-- Alert: swipes are swallowed during the countdown so a gesture can't dismiss it.
-- Navigation through the alert flow is `replace()` end-to-end
-  (`index → alert → result → index`), so every page is built fresh.
+- Alert: swipes are swallowed so a gesture can't dismiss it; only **OK** does.
+- Navigation through the alert flow is `replace()` both ways
+  (`index → alert → index`), so every page is built fresh.
 - Sensitivity is `push()`ed on top of Home instead, so Home stays alive
   underneath. API 3.0 pages have no `onResume`, so Home re-reads the stored
   sensitivity in its 1 s tick and rebuilds the detector when it changed
@@ -203,7 +197,7 @@ Design → Zepp OS mapping:
 | Design | Watch |
 |---|---|
 | Conic-gradient rings | `widget.ARC` track + progress, `start_angle: -90` (0° is 3 o'clock) |
-| Shield / check icons | `assets/default.{r,s}/shield.png` (68 / 62 px), `check.png` (60 / 54 px) rendered from the SVG paths with `rsvg-convert` |
+| Shield icon | `assets/default.{r,s}/shield.png` (68 / 62 px) rendered from the SVG path with `rsvg-convert` |
 | Radial red glow | three translucent `CIRCLE`s (`alpha` 18/22/26); a gradient PNG would be ~900 KB once the build converts it to TGA |
 | White pill / text link | `BUTTON` with `normal_color` white / black |
 | Radio rows, toggle | `FILL_RECT` + `STROKE_RECT` + `CIRCLE`, both states pre-created and swapped with `prop.VISIBLE` |
@@ -216,8 +210,7 @@ straight from the layout files (no simulator needed) — check it after moving
 anything.
 
 Not wired yet: the **siren** toggle persists but no audio plays (needs an
-audio asset + `@zos/media`). `contactName` is read from `@zos/storage`; the
-phone settings page (Step 7) pushes it there through the app-side.
+audio asset + `@zos/media`).
 
 ---
 
@@ -285,7 +278,7 @@ permissions and naming — it is the file checked in at the repo root.
     "version": { "code": 1, "name": "1.0.0" },
     "icon": "icon.png",
     "vender": "zepp",
-    "description": "Detects falls and alerts an emergency contact"
+    "description": "Detects falls and alerts you with vibration"
   },
   "permissions": [
     "device:os.accelerometer",
@@ -301,10 +294,8 @@ permissions and naming — it is the file checked in at the repo root.
   "targets": {
     "default": {
       "module": {
-        "page": { "pages": ["page/index", "page/alert", "page/result", "page/settings", "page/probe"] },
-        "app-service": { "services": ["app-service/probe"] },
-        "app-side": { "path": "app-side/index" },
-        "setting": { "path": "setting/index" }
+        "page": { "pages": ["page/index", "page/alert", "page/settings", "page/probe"] },
+        "app-service": { "services": ["app-service/probe"] }
       },
       "platforms": [
         { "st": "r", "dw": 480 },
@@ -351,8 +342,8 @@ permissions and naming — it is the file checked in at the repo root.
    `zeus login`.
 3. On your phone, open the Zepp app → Profile → *your watch* → Developer Mode
    (tap the app version 7× if hidden). You need a watch running **Zepp OS 3.0+**.
-4. Decide how the SOS leaves the phone: an HTTPS webhook you own, IFTTT/Make,
-   or Twilio's SMS API. You'll need the URL + token later.
+4. (Later, when SOS returns) decide how the SOS leaves the phone: an HTTPS
+   webhook you own, IFTTT/Make, or Twilio's SMS API.
 
 ### Step 1 — Scaffold  ✅ done (2026-09-16)
 
@@ -459,9 +450,8 @@ What the page does:
    (not worn). A wear-off also `reset()`s the detector so a half-seen fall
    can't span a gap.
 4. A 1 s `tick()` rolls the coverage ring (share of 5 s buckets that had
-   samples while worn, over the last 5 min), logs `[rate] …` every 5 s
-   when `DEBUG` — the **measured sample rate** and callback jitter, first
-   unknown in §8 (format in §12.5) — and
+   samples while worn, over the last 5 min), logs `[rate] NN Hz` every 5 s
+   when `DEBUG` — the **measured sample rate**, first unknown in §8 — and
    re-reads the stored sensitivity, rebuilding the detector if Settings
    changed it (that page is `push`ed on top, so Home never gets a fresh
    `onInit`), dims/undims the screen and re-arms the relaunch alarm every
@@ -498,119 +488,40 @@ Build note: zeus's esbuild pass scans every `.js` in the project, including
 `test/`, and warns on `import.meta` — so test helpers use `process.cwd()`
 -relative paths instead (`npm` always runs scripts from the package root).
 
-### Step 5 — Alert page (`page/alert.js`)  ✅ done · UI replaced by the design in §2b (result states moved to `page/result.js`)
+### Step 5 — Alert page (`page/alert.js`)  ✅ done · MVP: vibrate until OK (2026-09-24)
 
 Files: `page/alert.js`, `page/alert.r.layout.js`, `page/alert.s.layout.js`,
-strings in `page/i18n/en-US.po`, `"page/alert"` added to `app.json` pages.
+strings in `page/i18n/en-US.po`.
 
-Flow:
-
-1. `onInit(params)` parses the detector event `page/index` passed as JSON.
-2. `build` — `setPageBrightTime` for countdown + 60 s,
-   `pauseDropWristScreenOff({ duration: 0 })`, and
-   `onGesture(() => phase === 'countdown')` so a swipe can't dismiss the alert
-   by accident. `Vibrator.start({ mode: VIBRATOR_SCENE_CALL })` repeats until
+1. `onInit(params)` parses the detector event `page/index` passed as JSON
+   (`t`, `peakG`, `freefallMs`, …).
+2. `build` sets `setPageBrightTime` to 40 s and
+   `pauseDropWristScreenOff({ duration: 0 })`, swallows swipes with
+   `onGesture(() => true)`, and starts
+   `Vibrator.start({ mode: VIBRATOR_SCENE_CALL })`, which repeats until
    `stop()`.
-3. UI: red "Fall detected" title, a countdown ring (`widget.ARC`, 0° = 3
-   o'clock, so `start_angle: -90` is 12 o'clock; `end_angle` shrinks each
-   second via `prop.MORE`), the big number, and two buttons — green
-   **I'm OK** and red **Send SOS now**.
-4. `tick()` every second; at 0 → `sendSos('timeout')`. Buttons call
-   `dismiss()` or `sendSos('manual')`.
-5. `sendSos` stops the vibration, shows "Sending SOS…", then
-   `this.request({ method: 'sos.send', params: { ...event, source, ts } },
-   { timeout: 15000 })`. Resolves to `{ ok }` from the app-side (Step 6);
-   `ok` → "SOS sent", otherwise "Send failed"; a rejection (phone out of
-   range) → "No phone connection".
-6. The result stays with a **Done** button, and auto-returns after 20 s.
-7. Navigation is `replace()` in both directions: `index → alert` and
-   `alert → index`. Each page is built fresh, so `AUTO_START` restarts
-   monitoring on return without relying on `onResume`.
+3. UI: red glow, "Fall detected", the time (`Time.getFormatHour()`), what
+   the detector saw ("peak 3.4 g · 290 ms free fall"), "Vibration stops in
+   {n}s", and a white **OK** pill.
+4. **OK**, or 30 s (`MAX_S`) without it, stops the vibration and
+   `replace()`s back to `page/index`, where `AUTO_START` resumes monitoring.
+   Home disarms the relaunch alarm before opening the alert and re-arms it
+   when monitoring restarts.
 
 Gotchas found in the docs/typings:
 
 - `Vibrator.start()` takes `{ mode }` — not a bare constant.
 - BUTTON text can only be changed with `setProperty(prop.MORE, { x, y, w, h,
-  text })`; `prop.TEXT` alone isn't supported on buttons (fixed on the index
-  toggle too).
-- `prop.VISIBLE` is used to swap the OK/SOS buttons for Done.
-- Until Step 6 exists, the app-side has no `sos.send` handler, so the request
-  ends in "Send failed" / "No phone connection" — the page itself is complete.
+  text })`; `prop.TEXT` alone isn't supported on buttons.
 
-### Step 6 — App-side service (`app-side/index.js`)  ✅ done
+### Steps 6–7 — App-side service and phone settings  ⏸ removed for the MVP
 
-Runs inside the Zepp phone app (zml `BaseSideService`). Three messages:
-
-| Direction | Method | Purpose |
-|---|---|---|
-| watch → phone | `sos.send` `{ source, ts, event }` | POST the alert to the webhook; replies `{ ok, status }` or `{ ok: false, error }` |
-| watch → phone | `prefs.get` | Home asks for the contact name on open (5 s timeout, silently keeps stored values if the phone is out of range) |
-| phone → watch | `prefs.update` | pushed from `onSettingsChange` whenever the settings page edits `contactName`; Home's `onCall` stores it via `utils/prefs.js` |
-
-Settings are read from `settings.settingsStorage` (string-only) under the
-keys the phone settings page (Step 7) will write: `contactName`,
-`contactPhone`, `webhookUrl`, `webhookToken`.
-
-**Webhook contract.** The Zepp app cannot place calls, so the webhook is the
-escalation engine ("call the contact, then emergency services"). It receives:
-
-```http
-POST <webhookUrl>
-Authorization: Bearer <webhookToken>      # only if set
-Content-Type: application/json
-
-{
-  "type": "fall",
-  "app": "fall-guard",
-  "source": "timeout" | "manual",
-  "ts": 1789550000000,
-  "contact": { "name": "Anna Reyes", "phone": "+49…" },
-  "event": { "t", "freefallMs", "peakG", "stillStd", "angleDeg", "gyroPeakDps", "samples" }
-}
-```
-
-Any 2xx counts as sent; anything else (or a 10 s timeout) shows "Alert could
-not be sent" on the watch. Point it at a Twilio Function / Cloud Function /
-Make scenario that holds the credentials — never bundle secrets in the app.
-
-**Local end-to-end test** without a real relay:
-
-```bash
-npm run webhook          # tools/webhook-dev-server.js on :8787, prints your LAN URLs
-FAIL=1 npm run webhook   # answers 500 to exercise the failure state
-```
-
-Put `http://<mac-lan-ip>:8787/sos` in the Webhook URL setting (phone and Mac
-on the same Wi-Fi), long-press the ring on the watch → *Get help now* → the
-payload prints in the terminal and the watch shows "Alert sent".
-
-Not attached yet: **location**. The status string is "Alert sent" until a
-position is actually included (watch GPS via `@zos/sensor Geolocation` on
-GPS models, or phone location if the Zepp app exposes it).
-
-### Step 7 — Settings page (`setting/index.js`)  ✅ done
-
-Rendered inside the Zepp phone app (Fall Guard → Settings). Components are
-globals (`View`, `Section`, `TextInput`, `Text`, `Button`), and `build(props)`
-re-runs whenever `settingsStorage` changes, so the page is a pure function of
-storage.
-
-| Section | Fields → `settingsStorage` key |
-|---|---|
-| Emergency contact | Name → `contactName`, Phone → `contactPhone` (the watch shows "We'll call {first name}…") |
-| Alert delivery | Webhook URL → `webhookUrl`, Bearer token → `webhookToken`, **Send test alert** |
-| On the watch | note that sensitivity + siren live on the wrist (swipe up on Home) — one source of truth, no two-way sync |
-
-**Send test alert** goes through storage, since the settings page can't
-talk to the app-side directly: the button writes `testAlertRequest = now`;
-the app-side's `onSettingsChange` runs `sendSos({ source: 'test' })` and
-writes `testAlertResult = { ok, status | error, ts }`; the page re-renders and
-shows "Delivered (HTTP 200)", "Enter a webhook URL first." or the error.
-
-`contactName` edits are pushed to the watch immediately (`prefs.update`), so
-the alert caption updates without reopening the app.
-
-Strings live in `setting/i18n/en-US.po` (`gettext`).
+The phone side existed only to deliver the SOS. `app-side/index.js` POSTed
+the alert to a webhook (`sos.send`) and synced the contact name
+(`prefs.get` / `prefs.update`). `setting/index.js` held the contact, the
+webhook URL and token, and a **Send test alert** button. Both return with
+SOS; the code, the webhook contract and `tools/webhook-dev-server.js` are in
+commit `b47079a`.
 
 ### Step 8 — Test in the simulator with synthetic data  ✅ done
 
@@ -625,7 +536,7 @@ exercised two ways:
   `DEBUG = true` (`page/index.js`) it replays `DEMO_FALL` from
   `utils/demo-trace.js` — the same synthetic `fall_forward` trace, written by
   `npm run fixtures` — straight into the detector, so the whole
-  `index → alert → result → index` flow runs without sensor data.
+  `index → alert → index` flow runs without sensor data.
 
 ```bash
 open -a simulator      # Zepp OS Simulator, then pick a device in its window
@@ -684,20 +595,21 @@ cloud relay, not a LAN connection). Requires CLI ≥ 1.1.0, app ≥ 6.9.0.
 
 Phone: Developer Mode → tap the **Fall Guard** icon → **Logs** → start
 collection (bottom-right). "Device App" shows `console.log` from `page/*`
-(the `[fall-candidate]`, `[fall]`, `[simulate]` lines); "Side Service"
-shows `app-side/`. Stop collection before reading — the viewer buffers.
+(the `[fall-candidate]`, `[fall]`, `[simulate]` lines). Stop collection
+before reading — the viewer buffers.
 
 #### 9e. What to check, in order
 
 1. **It runs.** Open the app on the watch: green ring, "You're covered".
-   The Device App log prints `[rate] NORMAL accel 50.0 Hz dt 20/22/41 ms, …`
-   every 5 s — the real `FREQ_MODE_NORMAL` rate on this hardware and how
-   regular the callbacks are (README §8, first unknown; §12.5).
+   The Device App log prints `[rate] NN Hz` every 5 s — that is the real
+   `FREQ_MODE_NORMAL` rate on this hardware (README §8, first unknown).
 2. **Wear gate.** Take the watch off: title → "Not on wrist", ring turns
    red. Put it back.
-3. **Simulate fall.** Long-press the ring: the "Are you alright?" page
-   appears vibrating with the countdown; log shows `[fall] {...}`. "I'm fine"
-   → "Glad you're OK" → back to Home with monitoring restarted.
+3. **Simulate fall.** Long-press the ring: the "Fall detected" page
+   appears vibrating, with the time, peak g and free-fall ms; the log shows
+   `[fall] {...}`. **OK** → back to Home with monitoring restarted. Do it
+   again and don't touch it: the vibration stops after 30 s and Home comes
+   back by itself.
 4. **Screen-off behaviour.** Lower your wrist, wait 60 s, raise it. Does the
    app come back (setWakeUpRelaunch)? Did the Hz counter keep running
    while dark? This answers §8's second unknown and decides whether
@@ -714,10 +626,9 @@ shows `app-side/`. Stop collection before reading — the viewer buffers.
    `stillStd` and `reasons`. Tune `DEFAULTS` / `PRESETS` in
    `utils/fall-detector.js` until ADLs stay at zero and mattress falls
    fire; then `npm test` still has to pass.
-6. **Record traces**: done by the phase 1 recorder (§12). Everyday wear
-   records the motion around every hard impact, swipe left on Home runs the
-   staged protocol, both upload to `npm run webhook`, and `npm run eval`
-   scores the detector on them, so tuning is repeatable instead of manual.
+6. **Record traces** (later): the phase 1 recorder on branch
+   `phase1-recording` records the motion around every hard impact and runs
+   staged sessions, so tuning becomes repeatable instead of manual.
 7. **Battery.** Leave it monitoring for a full day and note the drain; if
    unacceptable, drop to `FREQ_MODE_LOW` and re-tune, or shorten
    `KEEP_BRIGHT_MS` if step 4 showed the sensor survives screen-off.
@@ -751,12 +662,10 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
    `device:os.accelerometer` is static, see Step 4).
 2. Page keeps running; detector consumes samples at `FREQ_MODE_NORMAL`.
 3. Fall signature matched → `replace('page/alert')`, sensor stopped.
-4. Watch vibrates in `VIBRATOR_SCENE_CALL` pattern, 30 s countdown shown.
-5. a) "I'm fine" → "Glad you're OK" → back to monitoring. b) Timeout or
-   "Get help now" → `page/result` → `request('sos.send')` over BLE →
-   app-side `fetch` → webhook → the relay calls the contact.
-6. Result shown on watch ("Alert sent" / "Alert could not be sent" /
-   "Phone not reachable").
+4. Watch vibrates in the `VIBRATOR_SCENE_CALL` pattern; the screen shows
+   "Fall detected", the time, peak g and free-fall ms.
+5. **OK**, or 30 s without it → vibration stops → back to Home, where
+   monitoring restarts. Nothing is sent anywhere (MVP).
 
 ## 7. Known limitations
 
@@ -766,8 +675,9 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
   screen black meanwhile, but the app still owns the watch while it runs.
   §10 has the full research and a probe that measures what a service *can*
   do on your firmware.
-- **No phone = no outbound alert.** BLE range to the phone is required for the
-  SOS. Consider an on-watch fallback such as a loud `notify()` plus repeating
+- **No outbound alert (MVP).** A fall only vibrates the watch; nobody else
+  is told. When SOS returns it needs BLE range to the phone, so it will also
+  need an on-watch fallback, such as a loud `notify()` plus repeating
   vibration until dismissed.
 - **Wrist placement.** Wrist accelerations from arm swings can exceed 2.5 g.
   The stillness phase is what makes this usable — don't remove it.
@@ -776,20 +686,12 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
 
 ## 8. Things to measure early (they're not in the docs)
 
-| Unknown | How to find out | Result |
-|---|---|---|
-| Actual Hz and jitter of `FREQ_MODE_LOW/NORMAL/HIGH`, accel and gyro | Record page (swipe left) → *Mode* cycles the mode; read the rates line or the `[rate]` log (§12.5) | _to fill_ |
-| Does `onChange` fire once per sample? | Compare the `[rate]` Hz with the mode's nominal rate; there is no batch/FIFO read in the API | _to fill_ |
-| Candidates per hour at the 1.8 g trigger | Day summaries: `candidates` ÷ `wornMs` (§12.4) | _to fill_ |
-| Battery drain per hour, per mode, with and without the gyroscope | Day summaries: battery % every 10 min; switch the recorder off on the record page for the no-gyro run | _to fill_ |
-| How long the wear sensor takes to report removal | Staged activity *Watch off, onto table*, or `wornOffAt` in `wear_off` recordings | _to fill_ |
-| Memory headroom for the ring buffers | Run HIGH with the gyro for an hour and watch for crashes in the Device App log | _to fill_ |
-| Whether `onChange` keeps firing with the screen off but page alive | Log timestamps to `@zos/fs`, wrist-down, wait 30 s, check | _to fill_ |
-| `setPageBrightTime` vs. system max-screen-on settings interaction | Try it; some firmware caps it | _to fill_ |
-| BLE `request()` timeout when the phone is out of range | Time a request with Bluetooth off on the phone | _to fill_ |
-
-When the rates are known, set `DEFAULT_MODE` in `utils/debug.js` to the
-lowest mode that gives at least 50 Hz (`HIGH` if none does).
+| Unknown | How to find out |
+|---|---|
+| Actual Hz of `FREQ_MODE_LOW/NORMAL/HIGH` | Count `onChange` calls over 10 s on the target watch |
+| Whether `onChange` keeps firing with the screen off but page alive | Log timestamps to `@zos/fs`, wrist-down, wait 30 s, check |
+| `setPageBrightTime` vs. system max-screen-on settings interaction | Try it; some firmware caps it |
+| BLE `request()` timeout when the phone is out of range | Time a request with Bluetooth off on the phone |
 
 ## 9. Next-step ideas
 
@@ -799,7 +701,6 @@ lowest mode that gives at least 50 Hz (`HIGH` if none does).
 - Auto-resume monitoring when the watch is re-worn (`Wear.onChange`).
 - Replace the threshold state machine with a small decision tree trained on
   your recorded fixtures — the `push(t,x,y,z)` interface stays the same.
-  This is now the detector v2 plan; phases 0–1 are §12.
 
 ## 10. Background monitoring — research and probe (2026-09-17)
 
@@ -959,132 +860,3 @@ harmless but pointless — pause before charging if it bothers you.
 - Side-service fetch — <https://docs.zepp.com/docs/reference/side-service-api/fetch/>
 - ZML (device ↔ phone messaging) — <https://github.com/zepp-health/zml>
 - Zeus CLI — <https://docs.zepp.com/docs/guides/tools/cli/>
-
-## 12. Detector v2, phases 0–1 — measure and record (implemented 2026-09-24)
-
-The v2 plan replaces the free-fall → impact → stillness chain with an
-impact trigger, features and a trained score. Nothing can be trained or
-tuned without real data, so phases 0 and 1 only **measure and record**; v1
-still makes every decision. All of it runs only when `DEBUG = true` in
-`utils/debug.js`, which also defaults the recorder to on. A release build
-(`DEBUG = false`) has none of it.
-
-### 12.1 Setup
-
-1. On your computer: `npm run webhook`. It prints
-   `http://<lan-ip>:8787/recording`.
-2. Phone: Zepp app → Fall Guard → Settings → **Developer → Recordings URL**,
-   paste that URL. Phone and computer must be on the same network.
-3. Install a debug build on the watch (§5 Step 9) and open the app. Home
-   now also runs the gyroscope and the recorder.
-
-Home asks the phone whether a Recordings URL is set before it uploads
-anything (`rec.ready`), and rechecks every 10 min, so an empty setting
-costs no BLE traffic. Files wait on the watch until it is set (up to 4 MB).
-
-### 12.2 Everyday recording
-
-`utils/candidate-recorder.js` runs the v2 trigger beside v1: a candidate
-opens when |a| exceeds **1.8 g**, and its t0 is the highest sample within
-the next second. When 10 s have passed, the window from 3 s before to 10 s
-after t0 is kept if:
-
-| `keep` | When | Weight |
-|---|---|---|
-| `v1_fall` | v1 alerted on this impact | 1 |
-| `v1_rejected` | v1 evaluated it and said no (a near-miss) | 1 |
-| `wear_off` | the watch came off during the window (`wornOffAt` says when) | 1 |
-| `sampled` | a random 10% of everything else | 10 |
-
-Every candidate, kept or not, adds a line to the day summary, so the
-candidate rate and false alarms per day can be computed from the 10% sample.
-
-A v1 alert opens the alert page, which vibrates and would pollute the
-accelerometer. So Home writes the alert's window straight away, at about
-+3 s, marked `truncated`. It also passes the recording id to the result
-page: after **I'm fine** it asks **Did you fall? Yes / No** (10 s, then it
-closes unanswered). "I'm fine" alone is not a label, because people who
-fall and are unhurt press it too.
-
-### 12.3 Staged protocol — swipe left on Home
-
-`page/record.js` walks through 15 activities × 10 repeats: seven falls
-(forward, backward, sideways, slide off a chair, trip while walking, fall
-and try to get up, fall and lie still), then eight non-falls (flop onto a
-bed, sit hard on a sofa, slam a hand on a table, clap, jump, jog, stairs,
-watch off onto a table). Do the falls onto a mattress.
-
-**Record** counts down 3-2-1 with light buzzes, gives a strong buzz, then
-records 15 s and buzzes again when it has saved. **Skip** moves to the next
-activity, or cancels a countdown. Progress survives leaving the page.
-While the page is open, Home keeps sampling but feeds neither v1 nor
-everyday candidates, so no alert interrupts the session and no staged fall
-is ever filed as everyday activity.
-
-The page is also the phase 0 readout: the frequency mode (**Mode** cycles
-LOW / NORMAL / HIGH, and Home restarts its sensors in the new mode), live
-accel and gyro rates, and the number and size of files waiting to upload.
-Tap the bottom line to switch the recorder off, for example to measure
-battery drain without the gyroscope.
-
-### 12.4 Files
-
-The dev server saves to `data/recordings/`, which git ignores:
-
-```
-data/recordings/
-├── everyday/c-<t0>.json            candidate windows (+ label from the result page)
-├── staged/<session>/s-<t0>.json    staged windows (activity, fall, trial)
-└── summaries/<yyyymmdd>.json       day summary, re-sent every 10 min while it grows
-```
-
-A recording is `{ v, id, kind, t0, keep, weight, truncated, preMs, postMs,
-v1, label, accel: [[t, x, y, z]], gyro: [[t, gx, gy, gz]] }`. `t` is in ms
-from t0 (negative before the impact), accel in cm/s² as integers, gyro in
-°/s to one decimal. At 50 Hz, a candidate window is about 22 KB and a
-staged window about 25 KB. A day summary holds `wornMs`, `monitoredMs`,
-`candidates` as `[t0, peakG, v1, keep, weight, truncated]` rows, `samples`
-as `[t, battery %, accel Hz, gyro Hz, mode]` rows every 10 min, and the
-count of recordings evicted when the watch ran out of room.
-
-### 12.5 Rates
-
-Every 5 s the Device App log shows, for example:
-
-```
-[rate] NORMAL accel 49.8 Hz dt 20/22/41 ms, gyro 50.1 Hz dt 20/21/38 ms
-```
-
-That is the callback rate and the interval between callbacks as median /
-95th percentile / max, per sensor. A max far above the median means the OS
-batches or drops callbacks. The Accelerometer API has no batch read, so
-those samples are lost. Fill in the §8 table from these numbers.
-
-### 12.6 Evaluation — `npm run eval`
-
-```bash
-npm run eval                              # v1, normal preset: test/fixtures + data/recordings + data/public
-npm run eval -- --sweep                   # low / normal / high presets
-npm run eval -- --compare eval/old.json   # difference against an earlier report
-npm run eval -- --out none data/recordings/staged
-```
-
-It replays every trace through a fresh detector and prints recall (with a
-95% Wilson interval), specificity per activity, false alarms per day
-(weighted alarms ÷ worn hours × 16 waking hours), and alert latency. An
-everyday window only counts alarms for its own impact (within 1 s of t0),
-because neighbouring windows overlap. `eval/report.json` is rewritten on
-each run; commit it with every detector change so the baseline travels
-with the code. Today it holds v1 on the synthetic fixtures only.
-
-### 12.7 Checks on the watch
-
-1. Home runs as before, and the log shows `[rate]` lines with a gyro part.
-2. Long-press the ring (simulate fall) → **I'm fine** → **Did you fall?**
-   appears. Answer it. Within a minute the dev server logs
-   `saved data/recordings/everyday/c-….json` with `"simulated":true` in
-   the label, and `npm run eval` skips that file.
-3. Swipe left: the record page shows rates after a few seconds. Record one
-   *Clap*, and the dev server logs a `staged/…` file with about 750 rows.
-4. Leave the watch on for a day, then check the day summary's `wornMs` and
-   candidate count, and fill in the candidate rate in §8.

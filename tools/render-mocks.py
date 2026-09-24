@@ -17,7 +17,7 @@ os.makedirs(OUT, exist_ok=True)
 
 # --- 1. evaluate the layout modules in Node with px() stubbed --------------
 tmp = tempfile.mkdtemp()
-pages = ['index', 'alert', 'result', 'settings']
+pages = ['index', 'alert', 'settings']
 for page in pages:
     for shape in ['r', 's']:
         src = open(os.path.join(ROOT, 'page', f'{page}.{shape}.layout.js')).read()
@@ -74,21 +74,10 @@ for shape in ['r', 's']:
         ov = Image.new('RGBA', im.size, (0, 0, 0, 0))
         ImageDraw.Draw(ov).ellipse([g['center_x'] - g['radius'], g['center_y'] - g['radius'], g['center_x'] + g['radius'], g['center_y'] + g['radius']], fill=(255, 59, 47, g['alpha']))
         im = Image.alpha_composite(im.convert('RGBA'), ov).convert('RGB'); d = ImageDraw.Draw(im)
-    txt(d, l['TITLE'], 'Are you alright?', C['text']); arc(d, l['RING'], C['track'], 270); arc(d, l['RING'], C['red'], l['RING']['start_angle'] + 360 * 0.58)
-    txt(d, l['SECONDS'], '28', C['text']); txt(d, l['CAPTION1'], "We'll call Anna,", C['caption']); txt(d, l['CAPTION2'], 'then emergency services', C['redSoft'])
-    rrect(d, l['FINE_BTN'], C['white']); txt(d, l['FINE_BTN'], "I'm fine", C['ink']); txt(d, l['HELP_BTN'], 'Get help now', C['redSoft'])
+    txt(d, l['TITLE'], 'Fall detected', C['text']); txt(d, l['TIME'], '14:32', C['text'])
+    txt(d, l['DETAILS'], 'peak 3.4 g · 290 ms free fall', C['caption']); txt(d, l['STOPS'], 'Vibration stops in 28s', C['faint'])
+    rrect(d, l['OK_BTN'], C['white']); txt(d, l['OK_BTN'], 'OK', C['ink'])
     save(im, 'alert', shape)
-
-    l = L[f'result.{shape}']; im, d = canvas(shape)
-    circ(d, l['OK_DISC'], C['greenDeep']); icon(d, l['OK_CHECK'])
-    txt(d, l['OK_TITLE'], "Glad you're OK", C['text']); txt(d, l['OK_LINE1'], 'Nobody was called.', C['muted'])
-    txt(d, l['OK_LINE2'], "We'll keep watching.", C['muted']); txt(d, l['OK_CLOSING'], 'Closing in 3s', C['faint'])
-    save(im, 'result-ok', shape)
-    im, d = canvas(shape)
-    txt(d, l['SOS_HEADER'], 'CONTACTING', C['redSoft']); circ(d, l['SOS_AVATAR'], C['avatar']); txt(d, l['SOS_INITIALS'], 'AR', C['textSoft'])
-    txt(d, l['SOS_NAME'], 'Anna Reyes', C['text']); txt(d, l['SOS_STATUS'], 'Alert sent', C['green'])
-    rrect(d, l['SOS_DONE'], C['card']); txt(d, l['SOS_DONE'], 'Done', C['redSoft'])
-    save(im, 'result-sos', shape)
 
     l = L[f'settings.{shape}']; im, d = canvas(shape)
     txt(d, l['TITLE'], 'How careful?', C['text'])
@@ -101,7 +90,7 @@ for shape in ['r', 's']:
     t = l['TOGGLE']; rrect(d, t['rect'], C['card']); txt(d, t['label'], 'Watch siren', C['textSoft'], 'l'); rrect(d, t['track'], C['green']); circ(d, t['knobOn'], C['white'])
     save(im, 'settings', shape)
 
-names = ['home', 'alert', 'result-ok', 'result-sos', 'settings']
+names = ['home', 'alert', 'settings']
 sheet = Image.new('RGB', (len(names) * 500, 950), '#303030')
 for i, n in enumerate(names):
     sheet.paste(Image.open(os.path.join(OUT, f'{n}.r.png')), (i * 500 + 10, 10))

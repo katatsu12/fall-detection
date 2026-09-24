@@ -1,11 +1,16 @@
 /**
- * Fall detected — "Are you alright?" (design 2A).
+ * Fall detected — the MVP alert (README "MVP scope").
  *
- * Vibrates and counts down. "I'm fine" → page/result?type=ok. Timeout or
- * "Get help now" → page/result?type=sos, which sends the alert through the
- * phone. Navigation uses replace() both ways so every page starts fresh.
+ * Vibrates until the wearer taps OK, or for MAX_S at most, then goes back to
+ * Home, where AUTO_START resumes monitoring. It shows when the fall was
+ * detected and what the detector saw (peak g, free-fall ms), so a real
+ * detection can be told from a false one while testing. Nothing leaves the
+ * watch; the SOS flow comes back in a later version.
+ *
+ * Navigation is replace() both ways (index → alert → index), so every page
+ * starts fresh.
  */
-import { Vibrator, VIBRATOR_SCENE_CALL } from '@zos/sensor'
+import { Vibrator, VIBRATOR_SCENE_CALL, Time } from '@zos/sensor'
 import { replace } from '@zos/router'
 import { setPageBrightTime, pauseDropWristScreenOff, resetDropWristScreenOff } from '@zos/display'
 import { onGesture, offGesture } from '@zos/interaction'
@@ -14,14 +19,14 @@ import { getText } from '@zos/i18n'
 import { BasePage } from '@zeppos/zml/base-page'
 import * as L from 'zosLoader:./alert.[pf].layout.js'
 import { COLOR } from '../utils/theme'
-import { getPref, firstName } from '../utils/prefs'
 
-const COUNTDOWN_S = 30 // seconds the wearer has to cancel
+const MAX_S = 30 // stop vibrating and return to monitoring after this long without OK
+const HOME = 'page/index'
 
 Page(
   BasePage({
     name: 'alert',
-    state: { remaining: COUNTDOWN_S, done: false, event: {}, timer: null, vib: null, widgets: {} },
+    state: { remaining: MAX_S, done: false, event: {}, timer: null, vib: null, widgets: {} },
 
     onInit(params) {
       try {
@@ -34,89 +39,69 @@ Page(
     build() {
       const w = this.state.widgets
 
-      setPageBrightTime({ brightTime: (COUNTDOWN_S + 30) * 1000 })
+      setPageBrightTime({ brightTime: (MAX_S + 10) * 1000 })
       pauseDropWristScreenOff({ duration: 0 })
-      // Swallow swipes so an accidental gesture can't dismiss the alert.
+      // Swallow swipes so an accidental gesture can't dismiss the alert; only OK does.
       onGesture(() => true)
 
       this.state.vib = new Vibrator()
       this.state.vib.start({ mode: VIBRATOR_SCENE_CALL }) // repeats until stop()
 
       for (const g of L.GLOW) createWidget(widget.CIRCLE, { ...g, color: COLOR.red })
+      const text = (geo, value, color) =>
+        createWidget(widget.TEXT, { ...geo, text: value, color, align_h: align.CENTER_H, align_v: align.CENTER_V })
+      text(L.TITLE, getText('alert.title'), COLOR.text)
+      text(L.TIME, this.timeText(), COLOR.text)
+      text(L.DETAILS, this.detailsText(), COLOR.caption)
+      w.stops = text(L.STOPS, this.stopsText(), COLOR.faint)
 
-      createWidget(widget.TEXT, {
-        ...L.TITLE,
-        text: getText('alert.title'),
-        color: COLOR.text,
-        align_h: align.CENTER_H,
-        align_v: align.CENTER_V,
-      })
-      createWidget(widget.ARC, { ...L.RING, end_angle: 270, color: COLOR.track })
-      w.ring = createWidget(widget.ARC, { ...L.RING, end_angle: 270, color: COLOR.red })
-      w.seconds = createWidget(widget.TEXT, {
-        ...L.SECONDS,
-        text: String(COUNTDOWN_S),
-        color: COLOR.text,
-        align_h: align.CENTER_H,
-        align_v: align.CENTER_V,
-      })
-
-      const name = firstName(getPref('contactName')) || getText('alert.fallback_contact')
-      createWidget(widget.TEXT, {
-        ...L.CAPTION1,
-        text: getText('alert.call_line').replace('{name}', name),
-        color: COLOR.caption,
-        align_h: align.CENTER_H,
-        align_v: align.CENTER_V,
-      })
-      createWidget(widget.TEXT, {
-        ...L.CAPTION2,
-        text: getText('alert.then_line'),
-        color: COLOR.redSoft,
-        align_h: align.CENTER_H,
-        align_v: align.CENTER_V,
-      })
-
-      // The only white element on the screen: dismiss is the most likely intent.
+      // The only white element on the screen: dismissing is the likely intent.
       createWidget(widget.BUTTON, {
-        ...L.FINE_BTN,
-        text: getText('alert.fine'),
+        ...L.OK_BTN,
+        text: getText('alert.ok'),
         color: COLOR.ink,
         normal_color: COLOR.white,
         press_color: COLOR.textSoft,
-        click_func: () => this.finish('ok', 'manual'),
-      })
-      createWidget(widget.BUTTON, {
-        ...L.HELP_BTN,
-        text: getText('alert.help'),
-        color: COLOR.redSoft,
-        normal_color: COLOR.bg,
-        press_color: COLOR.card,
-        click_func: () => this.finish('sos', 'manual'),
+        click_func: () => this.finish(),
       })
 
       this.state.timer = setInterval(() => this.tick(), 1000)
     },
 
+    /** The alert opens about 3 s after the impact, so the current minute is the detection time. */
+    timeText() {
+      const c = new Time()
+      const m = c.getMinutes()
+      return `${c.getFormatHour()}:${m < 10 ? '0' : ''}${m}`
+    },
+
+    /** What the detector saw, e.g. "peak 3.4 g · 290 ms free fall". */
+    detailsText() {
+      const e = this.state.event
+      if (!(e.peakG > 0)) return ''
+      return getText('alert.details')
+        .replace('{g}', e.peakG.toFixed(1))
+        .replace('{ms}', String(Math.round(e.freefallMs || 0)))
+    },
+
+    stopsText() {
+      return getText('alert.stops').replace('{n}', this.state.remaining)
+    },
+
     tick() {
       const s = this.state
       s.remaining -= 1
-      if (s.remaining <= 0) return this.finish('sos', 'timeout')
-      s.widgets.seconds.setProperty(prop.TEXT, String(s.remaining))
-      s.widgets.ring.setProperty(prop.MORE, {
-        ...L.RING,
-        color: COLOR.red,
-        end_angle: L.RING.start_angle + (360 * s.remaining) / COUNTDOWN_S,
-      })
+      if (s.remaining <= 0) return this.finish()
+      s.widgets.stops.setProperty(prop.TEXT, this.stopsText())
     },
 
-    /** Leave to the result page: type 'ok' (nobody called) or 'sos' (send the alert). */
-    finish(type, source) {
+    /** OK, or MAX_S without an answer: stop vibrating and go back to monitoring. */
+    finish() {
       const s = this.state
       if (s.done) return
       s.done = true
       this.cleanup()
-      replace({ url: 'page/result', params: JSON.stringify({ type, source, event: s.event }) })
+      replace({ url: HOME })
     },
 
     cleanup() {
