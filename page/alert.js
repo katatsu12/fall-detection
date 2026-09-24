@@ -18,7 +18,7 @@ import { createWidget, widget, prop, align } from '@zos/ui'
 import { getText } from '@zos/i18n'
 import { BasePage } from '@zeppos/zml/base-page'
 import * as L from 'zosLoader:./alert.[pf].layout.js'
-import { COLOR } from '../utils/theme'
+import { COLOR, hideStatusBar } from '../utils/theme'
 
 const MAX_S = 30 // stop vibrating and return to monitoring after this long without OK
 const HOME = 'page/index'
@@ -37,6 +37,7 @@ Page(
     },
 
     build() {
+      hideStatusBar()
       const w = this.state.widgets
 
       setPageBrightTime({ brightTime: (MAX_S + 10) * 1000 })
@@ -101,7 +102,8 @@ Page(
       if (s.done) return
       s.done = true
       this.cleanup()
-      replace({ url: HOME })
+      // Leave from a fresh tick rather than from inside the OK button's (or the timer's) own callback.
+      setTimeout(() => replace({ url: HOME }), 0)
     },
 
     cleanup() {

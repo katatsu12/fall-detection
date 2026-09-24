@@ -41,7 +41,7 @@ import { createWidget, widget, prop, align, event } from '@zos/ui'
 import { getText } from '@zos/i18n'
 import { BasePage } from '@zeppos/zml/base-page'
 import * as L from 'zosLoader:./index.[pf].layout.js'
-import { COLOR } from '../utils/theme'
+import { COLOR, hideStatusBar } from '../utils/theme'
 import { createFallDetector, replay, magnitudeG, STATE } from '../utils/fall-detector'
 import { createRaiseDetector } from '../utils/raise-detector'
 import { getPref, detectorOptions } from '../utils/prefs'
@@ -58,6 +58,7 @@ import {
 } from '../utils/monitor-mode'
 import { DEMO_FALL } from '../utils/demo-trace'
 import { addAlert, summarizeAlerts, formatTime } from '../utils/alert-log'
+import { createDiagnostics, diagText } from '../utils/fall-diagnostics'
 
 const AUTO_START = true // start monitoring as soon as the page opens
 const DEBUG = true // long-press the ring to simulate a fall; log sample rate
@@ -105,7 +106,12 @@ Page(
       buckets: [],
       alerts: [], // utils/alert-log.js: every real detection, for the "N alerts today" line
       alertsShown: '', // text currently on that line
+      diag: null, // DEBUG: utils/fall-diagnostics.js — why the last jolt did or didn't alert
+      gSum: 0, // DEBUG: |a| summed over the current second…
+      gCount: 0,
+      liveG: 0, // …and its mean over the last second, shown next to the clock
       simulating: false,
+      alerting: false, // a fall was detected; the alert page opens on the next timer tick
       widgets: {},
     },
 
@@ -117,6 +123,7 @@ Page(
       this.state.clock = new Time()
       this.state.raise = createRaiseDetector()
       this.state.alerts = loadAlerts()
+      if (DEBUG) this.state.diag = createDiagnostics({}, (a) => console.log('[diag]', diagText(a)))
       this.buildDetector()
     },
 
@@ -125,7 +132,10 @@ Page(
       const s = this.state
       s.sensitivity = getPref('sensitivity')
       s.detector = createFallDetector(detectorOptions())
-      s.detector.onCandidate((c) => console.log('[fall-candidate]', JSON.stringify(c)))
+      s.detector.onCandidate((c) => {
+        console.log('[fall-candidate]', JSON.stringify(c))
+        if (s.diag) s.diag.noteCandidate(c)
+      })
       s.detector.onFall((evt) => this.onFallDetected(evt))
     },
 
@@ -144,6 +154,7 @@ Page(
     },
 
     build() {
+      hideStatusBar()
       const w = this.state.widgets
 
       // Bottom of the stack: a black full-screen rect so a tap anywhere wakes a dimmed screen.
@@ -226,6 +237,7 @@ Page(
       s.wear = new Wear()
       s.worn = s.wear.getStatus() !== WEAR_NOT_WORN
       s.wearCb = () => {
+        if (!s.wear) return // a callback queued before stopMonitoring()
         s.worn = s.wear.getStatus() !== WEAR_NOT_WORN
         if (!s.worn) s.detector.reset() // don't carry a half-seen fall across a wear gap
         this.render()
@@ -253,8 +265,11 @@ Page(
       this.render()
     },
 
-    /** Stop the sensors and restore the screen. The relaunch alarm is left alone — see pause(). */
-    stopMonitoring() {
+    /**
+     * Stop the sensors and restore the screen. The relaunch alarm is left alone — see pause().
+     * `refresh` is false when the page is going away: onDestroy must not touch widgets.
+     */
+    stopMonitoring(refresh = true) {
       const s = this.state
       if (s.accel) {
         s.accel.offChange(s.accelCb)
@@ -278,7 +293,7 @@ Page(
       undim()
       s.running = false
       s.detector.reset()
-      this.render()
+      if (refresh) this.render()
     },
 
     /** The wearer's explicit stop: the only thing that also cancels the relaunch alarm. */
@@ -298,24 +313,38 @@ Page(
 
     onSample() {
       const s = this.state
+      // A callback queued before stopMonitoring(), or after a fall while the alert is opening.
+      if (!s.accel || s.alerting) return
       const { x, y, z } = s.accel.getCurrent()
       const now = Date.now()
       s.samplesSinceLog++
       s.bucket.samples++
       if (s.raise.push(now, x, y, z) && isDimmed()) this.wake()
+      const g = magnitudeG(x, y, z)
+      s.gSum += g
+      s.gCount++
       if (!s.worn) {
         s.bucket.worn = false
+        if (s.diag) s.diag.push(now, g, 'OFF', 'OFF') // shows "off wrist" for jolts while detection is paused
         return
       }
-      if (DEBUG && s.samplesSinceLog === 1) console.log('[g]', magnitudeG(x, y, z).toFixed(2))
+      if (DEBUG && s.samplesSinceLog === 1) console.log('[g]', g.toFixed(2))
+      const before = s.detector.getState()
       s.detector.push(now, x, y, z)
+      if (s.diag) s.diag.push(now, g, before, s.detector.getState())
     },
 
     /** Once a second: coverage bucket, sample-rate log, settings pickup, dimming, relaunch alarm, ring. */
     tick() {
       const s = this.state
+      if (s.alerting) return
       const now = Date.now()
       this.syncDetector()
+      if (s.gCount) {
+        s.liveG = s.gSum / s.gCount
+        s.gSum = 0
+        s.gCount = 0
+      }
       if (now - s.bucket.startedAt >= COVERAGE_BUCKET_MS) {
         s.buckets.push(s.bucket.samples > 0 && s.bucket.worn)
         if (s.buckets.length > COVERAGE_BUCKETS) s.buckets.shift()
@@ -342,7 +371,10 @@ Page(
     clockText() {
       const c = this.state.clock
       const m = c.getMinutes()
-      return `${c.getFormatHour()}:${m < 10 ? '0' : ''}${m}`
+      const time = `${c.getFormatHour()}:${m < 10 ? '0' : ''}${m}`
+      // DEBUG: the mean |a| of the last second must read about 1.00 g at rest. Anything far from that means
+      // the sensor isn't reporting cm/s² and no fall can ever trigger (README "If a test fall doesn't alert").
+      return DEBUG && this.state.liveG ? `${time} · ${this.state.liveG.toFixed(2)} g` : time
     },
 
     /** "No alerts today" / "2 alerts today · last 14:32" — the MVP test's false-alarm tally. */
@@ -383,7 +415,9 @@ Page(
       }
       w.clock.setProperty(prop.TEXT, this.clockText())
       w.title.setProperty(prop.TEXT, getText(title))
-      const line = this.alertsLine()
+      // DEBUG: for 30 s after a jolt this line says why it did or didn't alert, then the tally returns.
+      const attempt = s.diag && s.diag.latest(Date.now())
+      const line = attempt ? { text: diagText(attempt), color: COLOR.caption } : this.alertsLine()
       if (line.text !== s.alertsShown) {
         // setProperty(MORE) redraws the widget, so only when the line changes (a new alert, or midnight)
         s.alertsShown = line.text
@@ -396,14 +430,41 @@ Page(
       })
     },
 
+    /**
+     * The detector calls this from inside the accelerometer's onChange callback
+     * (or the long-press handler, for the demo). Stopping that sensor and
+     * replacing the page from inside its own callback destroys both while the
+     * callback still runs — the likely cause of a freeze and reboot on an
+     * Amazfit Active (2026-09-24). So only note the fall here; openAlert()
+     * does the teardown on a fresh tick.
+     */
     onFallDetected(evt) {
+      const s = this.state
+      if (s.alerting) return
+      s.alerting = true // onSample and tick ignore everything from now on
       console.log('[fall]', JSON.stringify(evt))
-      if (!this.state.simulating) this.logAlert(evt)
-      disarmRelaunch() // the alert flow comes back here by itself
-      this.wake()
-      this.stopMonitoring()
-      this.state.widgets.title.setProperty(prop.TEXT, getText('home.fall'))
-      replace({ url: 'page/alert', params: JSON.stringify(evt) })
+      const simulated = s.simulating
+      setTimeout(() => this.openAlert(evt, simulated), 0)
+    },
+
+    openAlert(evt, simulated) {
+      if (!simulated) {
+        try {
+          this.logAlert(evt)
+        } catch (e) {
+          console.log('[alerts] log failed', e) // bookkeeping must never block the alert
+        }
+      }
+      try {
+        disarmRelaunch() // the alert flow comes back here by itself
+        this.stopMonitoring(false) // no widget updates: the page is about to go
+        replace({ url: 'page/alert', params: JSON.stringify(evt) })
+      } catch (e) {
+        // Never leave Home stopped: keep monitoring even if the alert page could not open.
+        console.log('[fall] alert page failed', e)
+        this.state.alerting = false
+        this.startMonitoring()
+      }
     },
 
     /** Debug: replay the synthetic forward fall through the detector, bypassing the sensor. Not counted as an alert. */
@@ -419,7 +480,7 @@ Page(
     // Leaving the page while monitoring (side button, OS kill, replace) keeps the alarm armed:
     // that is the dead-man's switch. pause() is the only path that disarms it.
     onDestroy() {
-      this.stopMonitoring()
+      this.stopMonitoring(false) // widgets may already be gone
       offGesture()
     },
   }),

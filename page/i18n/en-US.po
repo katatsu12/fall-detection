@@ -10,9 +10,6 @@ msgstr "Paused"
 msgid "home.not_worn"
 msgstr "Not on wrist"
 
-msgid "home.fall"
-msgstr "Fall detected"
-
 msgid "home.alerts_none"
 msgstr "No alerts today"
 

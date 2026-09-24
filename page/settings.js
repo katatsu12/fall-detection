@@ -9,7 +9,7 @@ import { createWidget, widget, prop, align, event } from '@zos/ui'
 import { getText } from '@zos/i18n'
 import { BasePage } from '@zeppos/zml/base-page'
 import * as L from 'zosLoader:./settings.[pf].layout.js'
-import { COLOR } from '../utils/theme'
+import { COLOR, hideStatusBar } from '../utils/theme'
 import { getPref, setPref, SENSITIVITY } from '../utils/prefs'
 import { keepAwake } from '../utils/monitor-mode'
 
@@ -33,6 +33,7 @@ Page(
     },
 
     build() {
+      hideStatusBar()
       keepAwake(AWAKE_MS)
       createWidget(widget.TEXT, {
         ...L.TITLE,

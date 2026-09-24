@@ -14,7 +14,7 @@ import { createWidget, widget, prop, align, text_style } from '@zos/ui'
 import { getText } from '@zos/i18n'
 import { BasePage } from '@zeppos/zml/base-page'
 import * as L from 'zosLoader:./probe.[pf].layout.js'
-import { COLOR } from '../utils/theme'
+import { COLOR, hideStatusBar } from '../utils/theme'
 import { PROBE_SERVICE, loadProbe, clearProbe } from '../utils/probe-store'
 
 const PERMISSION = 'device:os.bg_service'
@@ -30,6 +30,7 @@ Page(
     state: { rows: [], timer: null, message: '' },
 
     build() {
+      hideStatusBar()
       createWidget(widget.TEXT, {
         ...L.TITLE,
         text: getText('probe.title'),

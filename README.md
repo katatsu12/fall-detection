@@ -36,6 +36,33 @@ Missed falls → switch to *Watchful*; too many false alarms → *Relaxed*.
 The `[fall-candidate]` log lines show why each near-miss was rejected, which
 is what tuning `PRESETS` in `utils/fall-detector.js` starts from.
 
+### If a test fall doesn't alert
+
+1. **Long-press the ring.** If "Fall detected" appears, the alert flow works
+   and the detector simply didn't count your fall.
+2. **Check the clock line at rest.** Debug builds show the time and the
+   mean |a| of the last second, for example `3:07 · 1.00 g`. Sitting still it
+   must read about 1.00 g. If it reads about 0.01 g or 10 g, the sensor isn't
+   reporting the documented cm/s², no jolt ever passes a threshold, and no
+   fall can trigger. Report the number instead of tuning.
+3. **Read the line under the title right after a test fall.** For 30 s
+   after any jolt over 1.4 g it shows the strongest one, for example
+   `hit 3.1 g · drop 0.42 g · moved` (`utils/fall-diagnostics.js`). If it
+   still says "No alerts today" right after a fall, no jolt passed 1.4 g.
+
+| Last word | Meaning | Try |
+|---|---|---|
+| off wrist | The watch reported "not worn", so detection was paused | Wear it snugly on the wrist |
+| no drop | The wrist never fell under the free-fall level before the hit: 0.7 g on *Watchful*, 0.6 g *Balanced*, 0.5 g *Relaxed* | Let yourself drop instead of lowering yourself; compare the drop number with the level |
+| no hit | Free fall seen, but no hit above the impact level within 600 ms: 2.0 g *Watchful*, 2.5 g *Balanced*, 3.0 g *Relaxed* | A mattress softens the hit; compare the hit number with the level |
+| moved | v1 saw the fall, but you moved during the 3 s it waits for stillness | Lie still for 3 s after landing |
+| wait… | Impact seen; the stillness check is still running | Wait 3 s |
+| ALERT | It alerted | — |
+
+Every attempt also goes to the Device App log as `[diag] hit … · drop … ·
+…`, so a series of test falls can be read back in one go. Those numbers
+are what the preset thresholds get tuned from.
+
 ### Deferred
 
 | Deferred | Where it is |
@@ -169,6 +196,7 @@ fall-detection/
 │   ├── monitor-mode.js    # dimming, shared "awake" deadline, dead-man's alarm (§10.5)
 │   ├── raise-detector.js  # raise-to-wake from the accel stream (pure, tested)
 │   ├── alert-log.js       # alert tally for the MVP test (pure, tested)
+│   ├── fall-diagnostics.js # "why didn't it alert?" debug line (pure, tested)
 │   ├── probe-store.js     # record shared by the probe service and its page
 │   ├── theme.js           # palette from the design
 │   └── demo-trace.js      # generated synthetic fall for the debug replay
@@ -177,7 +205,7 @@ fall-detection/
 └── test/
     ├── fall-detector.test.js
     ├── raise-detector.test.js
-    ├── alert-log.test.js
+    ├── alert-log.test.js  fall-diagnostics.test.js
     └── fixtures/*.json    # recorded accel traces (real falls / ADLs)
 ```
 
@@ -228,6 +256,9 @@ Design → Zepp OS mapping:
 | App icon | red disc + white shield (`assets/default.*/icon.png`) |
 
 Palette lives in `utils/theme.js`; per-shape geometry in `page/<page>.{r,s}.layout.js`.
+Square watches draw a system status bar (app name + time) over the top of
+every page, which covered Home's clock; every page calls `hideStatusBar()`
+(`utils/theme.js`) first thing in `build()`.
 `npm run mocks` renders every screen for both shapes to `tools/mocks/sheet.png`
 straight from the layout files (no simulator needed) — check it after moving
 anything.
@@ -532,8 +563,16 @@ strings in `page/i18n/en-US.po`.
    Home disarms the relaunch alarm before opening the alert and re-arms it
    when monitoring restarts.
 
-Gotchas found in the docs/typings:
+Gotchas found in the docs/typings, and on the watch:
 
+- **Never leave a page from inside a sensor callback.** The detector fires
+  `onFall` from inside the accelerometer's `onChange`; stopping that sensor
+  and calling `replace()` right there is the likely cause of a freeze and
+  reboot on an Amazfit Active (2026-09-24). Home now only sets `alerting` in
+  the callback and
+  opens the alert from `setTimeout(…, 0)`; `onSample` returns early once it
+  is set or once the sensor is gone, and `onDestroy` releases the sensors
+  without touching widgets. The alert page leaves the same way.
 - `Vibrator.start()` takes `{ mode }` — not a bare constant.
 - BUTTON text can only be changed with `setProperty(prop.MORE, { x, y, w, h,
   text })`; `prop.TEXT` alone isn't supported on buttons.

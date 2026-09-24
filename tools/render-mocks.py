@@ -68,6 +68,11 @@ for shape in ['r', 's']:
     rrect(d, l['DISC'], C['bg']); icon(d, l['SHIELD']); txt(d, l['TITLE'], "You're covered", C['text'])
     txt(d, l['CLOCK'], '14:32', C['muted']); txt(d, l['ALERTS'], '1 alert today · last 9:05', C['redSoft'])
     save(im, 'home', shape)
+    im, d = canvas(shape)  # DEBUG: the same line for 30 s after a jolt (utils/fall-diagnostics.js), longest case
+    arc(d, l['RING'], C['track'], 270); arc(d, l['RING'], C['green'], l['RING']['start_angle'] + 360 * 0.88)
+    rrect(d, l['DISC'], C['bg']); icon(d, l['SHIELD']); txt(d, l['TITLE'], "You're covered", C['text'])
+    txt(d, l['CLOCK'], '14:32 · 1.00 g', C['muted']); txt(d, l['ALERTS'], 'hit 3.1 g · drop 0.42 g · off wrist', C['caption'])
+    save(im, 'home-debug', shape)
 
     l = L[f'alert.{shape}']; im, d = canvas(shape)
     for g in l['GLOW']:
@@ -90,7 +95,7 @@ for shape in ['r', 's']:
     # the Watch siren toggle (L['TOGGLE']) stays hidden until SIREN_READY in page/settings.js
     save(im, 'settings', shape)
 
-names = ['home', 'alert', 'settings']
+names = ['home', 'home-debug', 'alert', 'settings']
 sheet = Image.new('RGB', (len(names) * 500, 950), '#303030')
 for i, n in enumerate(names):
     sheet.paste(Image.open(os.path.join(OUT, f'{n}.r.png')), (i * 500 + 10, 10))

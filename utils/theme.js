@@ -1,4 +1,20 @@
 // Fall Guard palette, lifted from the design canvas ("Fall Guard - Zepp OS.dc.html").
+import { setStatusBarVisible } from '@zos/ui'
+
+/**
+ * Square watches draw a system status bar (app name + time) over the top
+ * ~70 px of every page, which hides Home's clock and the page titles, and
+ * keeps monitor mode's black screen from being black. Round watches have
+ * none, so the call may be missing there.
+ */
+export function hideStatusBar() {
+  try {
+    setStatusBarVisible(false)
+  } catch (e) {
+    /* round watch: nothing to hide */
+  }
+}
+
 export const COLOR = {
   bg: 0x000000,
   white: 0xffffff,
