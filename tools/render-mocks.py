@@ -66,7 +66,7 @@ for shape in ['r', 's']:
     l = L[f'index.{shape}']; im, d = canvas(shape)
     arc(d, l['RING'], C['track'], 270); arc(d, l['RING'], C['green'], l['RING']['start_angle'] + 360 * 0.88)
     rrect(d, l['DISC'], C['bg']); icon(d, l['SHIELD']); txt(d, l['TITLE'], "You're covered", C['text'])
-    txt(d, l['CLOCK'], '14:32', C['muted'])
+    txt(d, l['CLOCK'], '14:32', C['muted']); txt(d, l['ALERTS'], '1 alert today · last 9:05', C['redSoft'])
     save(im, 'home', shape)
 
     l = L[f'alert.{shape}']; im, d = canvas(shape)
@@ -87,7 +87,7 @@ for shape in ['r', 's']:
         if sel: circ(d, row['radio'], C['red']); circ(d, row['radioDot'], C['bg'])
         else: circ(d, row['radio'], C['radioOff']); circ(d, row['radioInner'], C['card'])
         txt(d, row['label'], lab, C['text'] if sel else C['textSoft'], 'l'); txt(d, row['sub'], sub, C['caption'] if sel else C['dim'], 'l')
-    t = l['TOGGLE']; rrect(d, t['rect'], C['card']); txt(d, t['label'], 'Watch siren', C['textSoft'], 'l'); rrect(d, t['track'], C['green']); circ(d, t['knobOn'], C['white'])
+    # the Watch siren toggle (L['TOGGLE']) stays hidden until SIREN_READY in page/settings.js
     save(im, 'settings', shape)
 
 names = ['home', 'alert', 'settings']

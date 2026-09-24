@@ -15,12 +15,33 @@ wearer taps OK.
 This version exists to prove the detector on a real wrist. A detected fall
 opens a "Fall detected" screen that vibrates until you tap OK, or for 30 s
 at most, and then monitoring resumes. Nothing leaves the watch: there is no
-phone-side service and no phone settings page.
+phone-side service and no phone settings page. Home counts the alerts ("2
+alerts today · last 14:32", `utils/alert-log.js`), which is how the test
+below tallies false alarms; the long-press demo doesn't count.
+
+### How to prove it
+
+Install with `zeus preview` (§5 Step 9) and check, in order. The pass marks
+are starting points; change them if you have other targets.
+
+| Check | How | Passes if |
+|---|---|---|
+| Stays alive | Wear it for a day; leave the app once with the side button | Ring stays green; the app returns within 90 s |
+| Sample rate | `[rate]` line in the Device App log (§5 9d) | At least 25 Hz, the lowest rate the tests cover |
+| Catches falls | 10 falls each onto a mattress: forward, backward, sideways | At least 8 of 10 per direction |
+| Ignores daily life | 10 each: sit down hard, clap, slam a hand on a table, flop onto a bed, stairs; then 3 days of normal wear | At most 1 alert per day on Home's tally |
+| Battery | A full day of monitoring | Lasts a waking day (about 16 h) |
+
+Missed falls → switch to *Watchful*; too many false alarms → *Relaxed*.
+The `[fall-candidate]` log lines show why each near-miss was rejected, which
+is what tuning `PRESETS` in `utils/fall-detector.js` starts from.
+
+### Deferred
 
 | Deferred | Where it is |
 |---|---|
 | SOS: 30 s countdown, "Get help now", phone relay to a webhook, emergency contact, phone settings page | Removed. The last version without the recorder is commit `b47079a`: `page/alert.js`, `page/result.*`, `app-side/`, `setting/`, `tools/webhook-dev-server.js`, `check.png` |
-| Phase 0–1 recorder, staged recordings, uploads, `npm run eval` | Branch `phase1-recording` (commit `fdecfa0`, reverted on `main`) |
+| Phase 0–1 recorder, staged recordings, uploads, `npm run eval` | Branch `phase1-recording` (commit `fdecfa0`; taken off `main` in `5a1c005`) |
 | Detector v2 | The plan doc; v1 (`utils/fall-detector.js`) makes every decision |
 
 Steps 5–7 and §6 below describe the MVP. Earlier SOS details live in the
@@ -147,6 +168,7 @@ fall-detection/
 │   ├── prefs.js           # localStorage-backed settings + sensitivity → presets
 │   ├── monitor-mode.js    # dimming, shared "awake" deadline, dead-man's alarm (§10.5)
 │   ├── raise-detector.js  # raise-to-wake from the accel stream (pure, tested)
+│   ├── alert-log.js       # alert tally for the MVP test (pure, tested)
 │   ├── probe-store.js     # record shared by the probe service and its page
 │   ├── theme.js           # palette from the design
 │   └── demo-trace.js      # generated synthetic fall for the debug replay
@@ -155,6 +177,7 @@ fall-detection/
 └── test/
     ├── fall-detector.test.js
     ├── raise-detector.test.js
+    ├── alert-log.test.js
     └── fixtures/*.json    # recorded accel traces (real falls / ADLs)
 ```
 
@@ -170,9 +193,9 @@ screens return with SOS.
 
 | Screen | Page | What's on it |
 |---|---|---|
-| Home — "You're covered" | `page/index` | Simplified from the design: a single coverage ring with the shield, centred, the state title beneath it (covered / paused / not on wrist) and a clock line above, since in monitor mode this screen *is* the wearer's watch face. The three info rows were dropped on 2026-09-16. |
+| Home — "You're covered" | `page/index` | Simplified from the design: a single coverage ring with the shield, centred, the state title beneath it (covered / paused / not on wrist) and a clock line above, since in monitor mode this screen *is* the wearer's watch face. The three info rows were dropped on 2026-09-16. For the MVP test a last line counts alerts: "No alerts today" / "2 alerts today · last 14:32". |
 | Fall detected | `page/alert` | Red glow, "Fall detected", the time, what the detector saw ("peak 3.4 g · 290 ms free fall"), "Vibration stops in 28s", white **OK** pill. Vibrates until OK, 30 s at most. |
-| Sensitivity — "How careful?" | `page/settings` | Relaxed / Balanced / Watchful radio rows (→ `PRESETS.low/normal/high`), *Watch siren* toggle. |
+| Sensitivity — "How careful?" | `page/settings` | Relaxed / Balanced / Watchful radio rows (→ `PRESETS.low/normal/high`). The *Watch siren* toggle is hidden until alert sound exists. |
 
 Interactions the design leaves implicit:
 
@@ -209,8 +232,9 @@ Palette lives in `utils/theme.js`; per-shape geometry in `page/<page>.{r,s}.layo
 straight from the layout files (no simulator needed) — check it after moving
 anything.
 
-Not wired yet: the **siren** toggle persists but no audio plays (needs an
-audio asset + `@zos/media`).
+Not wired yet: alert **sound**. The *Watch siren* toggle is hidden
+(`SIREN_READY = false` in `page/settings.js`) until an audio asset and
+`@zos/media` (or the `Buzzer` sensor) play something.
 
 ---
 

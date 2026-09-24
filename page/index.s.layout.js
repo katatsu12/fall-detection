@@ -11,3 +11,5 @@ export const DISC = { x: px(123), y: px(124), w: px(144), h: px(144), radius: px
 export const SHIELD = { x: px(164), y: px(165), w: px(62), h: px(62), src: 'shield.png' }
 
 export const TITLE = { x: px(0), y: px(304), w: px(390), h: px(42), text_size: px(32) }
+// MVP test tally: "2 alerts today · last 14:32" (utils/alert-log.js).
+export const ALERTS = { x: px(0), y: px(350), w: px(390), h: px(32), text_size: px(24) }

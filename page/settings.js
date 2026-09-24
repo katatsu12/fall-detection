@@ -1,8 +1,9 @@
 /**
  * Sensitivity — "How careful?" (design 2A). Reached by swiping up on Home.
- * Three levels named by behaviour, plus the siren toggle. Persists via
- * utils/prefs; Home (still alive underneath, since this page is pushed) polls
- * the stored value in its tick and rebuilds its detector when it changes.
+ * Three levels named by behaviour, plus the siren toggle (hidden until sound
+ * exists, see SIREN_READY). Persists via utils/prefs; Home (still alive
+ * underneath, since this page is pushed) polls the stored value in its tick
+ * and rebuilds its detector when it changes.
  */
 import { createWidget, widget, prop, align, event } from '@zos/ui'
 import { getText } from '@zos/i18n'
@@ -13,6 +14,7 @@ import { getPref, setPref, SENSITIVITY } from '../utils/prefs'
 import { keepAwake } from '../utils/monitor-mode'
 
 const AWAKE_MS = 20000 // Home is alive underneath and dims when nobody interacts — keep it lit while here
+const SIREN_READY = false // no alert sound exists yet (README §2b), so the switch would promise nothing
 
 const LEVELS = [
   { id: SENSITIVITY.RELAXED, label: 'settings.relaxed', sub: 'settings.relaxed_sub' },
@@ -60,15 +62,17 @@ Page(
         return { id: level.id, rect, border, radioOffOuter, radioOffInner, radioOn, radioDot, label, sub, g }
       })
 
-      const t = L.TOGGLE
-      const flip = () => this.setSiren(!this.state.siren)
-      const on = (w) => (w.addEventListener(event.CLICK_UP, flip), w)
-      on(createWidget(widget.FILL_RECT, { ...t.rect, color: COLOR.card }))
-      on(createWidget(widget.TEXT, { ...t.label, text: getText('settings.siren'), color: COLOR.textSoft, align_h: align.LEFT, align_v: align.CENTER_V }))
-      this.state.toggle = {
-        track: on(createWidget(widget.FILL_RECT, { ...t.track, color: COLOR.green })),
-        knobOn: on(createWidget(widget.CIRCLE, { ...t.knobOn, color: COLOR.white })),
-        knobOff: on(createWidget(widget.CIRCLE, { ...t.knobOff, color: COLOR.white })),
+      if (SIREN_READY) {
+        const t = L.TOGGLE
+        const flip = () => this.setSiren(!this.state.siren)
+        const on = (w) => (w.addEventListener(event.CLICK_UP, flip), w)
+        on(createWidget(widget.FILL_RECT, { ...t.rect, color: COLOR.card }))
+        on(createWidget(widget.TEXT, { ...t.label, text: getText('settings.siren'), color: COLOR.textSoft, align_h: align.LEFT, align_v: align.CENTER_V }))
+        this.state.toggle = {
+          track: on(createWidget(widget.FILL_RECT, { ...t.track, color: COLOR.green })),
+          knobOn: on(createWidget(widget.CIRCLE, { ...t.knobOn, color: COLOR.white })),
+          knobOff: on(createWidget(widget.CIRCLE, { ...t.knobOff, color: COLOR.white })),
+        }
       }
 
       this.render()
@@ -103,6 +107,7 @@ Page(
         r.sub.setProperty(prop.MORE, { ...r.g.sub, color: sel ? COLOR.caption : COLOR.dim })
       }
       const t = s.toggle
+      if (!t.track) return
       t.track.setProperty(prop.MORE, { ...L.TOGGLE.track, color: s.siren ? COLOR.green : COLOR.radioOff })
       t.knobOn.setProperty(prop.VISIBLE, s.siren)
       t.knobOff.setProperty(prop.VISIBLE, !s.siren)

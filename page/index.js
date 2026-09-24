@@ -26,7 +26,8 @@
  * and re-reads the stored sensitivity in its 1 s tick (API 3.0 pages have
  * no onResume to hook).
  */
-import { Accelerometer, Wear, Time, FREQ_MODE_NORMAL } from '@zos/sensor'
+import { Accelerometer, Wear, Time, FREQ_MODE_NORMAL, TIME_HOUR_FORMAT_12 } from '@zos/sensor'
+import { localStorage } from '@zos/storage'
 import {
   setPageBrightTime,
   resetPageBrightTime,
@@ -56,6 +57,7 @@ import {
   REARM_MS,
 } from '../utils/monitor-mode'
 import { DEMO_FALL } from '../utils/demo-trace'
+import { addAlert, summarizeAlerts, formatTime } from '../utils/alert-log'
 
 const AUTO_START = true // start monitoring as soon as the page opens
 const DEBUG = true // long-press the ring to simulate a fall; log sample rate
@@ -69,6 +71,17 @@ const AWAKE_MS = 20000 // screen stays visible this long after an interaction
 
 const WEAR_NOT_WORN = 0
 const HOME_URL = 'page/index'
+const ALERTS_KEY = 'alerts' // utils/alert-log.js list, kept across relaunches
+
+function loadAlerts() {
+  try {
+    const v = localStorage.getItem(ALERTS_KEY, '[]')
+    const list = typeof v === 'string' ? JSON.parse(v) : v
+    return Array.isArray(list) ? list : []
+  } catch (e) {
+    return []
+  }
+}
 
 Page(
   BasePage({
@@ -90,6 +103,9 @@ Page(
       lastLogAt: 0,
       bucket: { startedAt: 0, samples: 0, worn: true },
       buckets: [],
+      alerts: [], // utils/alert-log.js: every real detection, for the "N alerts today" line
+      alertsShown: '', // text currently on that line
+      simulating: false,
       widgets: {},
     },
 
@@ -100,6 +116,7 @@ Page(
       keepAwake(AWAKE_MS)
       this.state.clock = new Time()
       this.state.raise = createRaiseDetector()
+      this.state.alerts = loadAlerts()
       this.buildDetector()
     },
 
@@ -155,6 +172,13 @@ Page(
         ...L.TITLE,
         text: getText('home.paused'),
         color: COLOR.text,
+        align_h: align.CENTER_H,
+        align_v: align.CENTER_V,
+      })
+      w.alerts = createWidget(widget.TEXT, {
+        ...L.ALERTS,
+        text: '',
+        color: COLOR.muted,
         align_h: align.CENTER_H,
         align_v: align.CENTER_V,
       })
@@ -321,13 +345,34 @@ Page(
       return `${c.getFormatHour()}:${m < 10 ? '0' : ''}${m}`
     },
 
+    /** "No alerts today" / "2 alerts today · last 14:32" — the MVP test's false-alarm tally. */
+    alertsLine() {
+      const { today, last } = summarizeAlerts(this.state.alerts, Date.now())
+      if (!today) return { text: getText('home.alerts_none'), color: COLOR.muted }
+      const time = formatTime(last.t, this.state.clock.getHourFormat() === TIME_HOUR_FORMAT_12)
+      const key = today === 1 ? 'home.alerts_one' : 'home.alerts_many'
+      return { text: getText(key).replace('{n}', today).replace('{time}', time), color: COLOR.redSoft }
+    },
+
+    /** Count a real detection (not the long-press demo) and keep it across relaunches. */
+    logAlert(evt) {
+      const s = this.state
+      s.alerts = addAlert(s.alerts, evt, Date.now())
+      try {
+        localStorage.setItem(ALERTS_KEY, JSON.stringify(s.alerts))
+      } catch (e) {
+        console.log('[alerts] save failed', e)
+      }
+      console.log('[alerts]', this.alertsLine().text)
+    },
+
     render() {
       const s = this.state
       const w = s.widgets
       if (!w.title) return
 
       const visible = !isDimmed()
-      for (const k of ['clock', 'track', 'ring', 'disc', 'shield', 'title']) w[k].setProperty(prop.VISIBLE, visible)
+      for (const k of ['clock', 'track', 'ring', 'disc', 'shield', 'title', 'alerts']) w[k].setProperty(prop.VISIBLE, visible)
       if (!visible) return
 
       let title = 'home.paused'
@@ -338,6 +383,12 @@ Page(
       }
       w.clock.setProperty(prop.TEXT, this.clockText())
       w.title.setProperty(prop.TEXT, getText(title))
+      const line = this.alertsLine()
+      if (line.text !== s.alertsShown) {
+        // setProperty(MORE) redraws the widget, so only when the line changes (a new alert, or midnight)
+        s.alertsShown = line.text
+        w.alerts.setProperty(prop.MORE, { ...L.ALERTS, ...line })
+      }
       w.ring.setProperty(prop.MORE, {
         ...L.RING,
         color: ringColor,
@@ -347,6 +398,7 @@ Page(
 
     onFallDetected(evt) {
       console.log('[fall]', JSON.stringify(evt))
+      if (!this.state.simulating) this.logAlert(evt)
       disarmRelaunch() // the alert flow comes back here by itself
       this.wake()
       this.stopMonitoring()
@@ -354,11 +406,13 @@ Page(
       replace({ url: 'page/alert', params: JSON.stringify(evt) })
     },
 
-    /** Debug: replay the synthetic forward fall through the detector, bypassing the sensor. */
+    /** Debug: replay the synthetic forward fall through the detector, bypassing the sensor. Not counted as an alert. */
     simulateFall() {
       this.wake()
       if (!this.state.running) this.startMonitoring()
+      this.state.simulating = true
       const events = replay(this.state.detector, DEMO_FALL, Date.now())
+      this.state.simulating = false
       console.log('[simulate] events:', events.length)
     },
 

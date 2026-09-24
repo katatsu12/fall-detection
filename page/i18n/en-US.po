@@ -13,6 +13,15 @@ msgstr "Not on wrist"
 msgid "home.fall"
 msgstr "Fall detected"
 
+msgid "home.alerts_none"
+msgstr "No alerts today"
+
+msgid "home.alerts_one"
+msgstr "1 alert today · last {time}"
+
+msgid "home.alerts_many"
+msgstr "{n} alerts today · last {time}"
+
 msgid "alert.title"
 msgstr "Fall detected"
 
