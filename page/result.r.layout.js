@@ -10,6 +10,12 @@ export const OK_LINE1 = { x: px(40), y: px(284), w: px(400), h: px(36), text_siz
 export const OK_LINE2 = { x: px(40), y: px(320), w: px(400), h: px(36), text_size: px(26) }
 export const OK_CLOSING = { x: px(0), y: px(374), w: px(480), h: px(33), text_size: px(24) }
 
+// --- "Did you fall?" (debug builds, labels the alert's recording) ---
+export const FELL_Q = { x: px(40), y: px(278), w: px(400), h: px(38), text_size: px(28) }
+export const FELL_YES = { x: px(96), y: px(324), w: px(136), h: px(52), radius: px(26), text_size: px(26) }
+export const FELL_NO = { x: px(248), y: px(324), w: px(136), h: px(52), radius: px(26), text_size: px(26) }
+export const ASK_CLOSING = { x: px(0), y: px(386), w: px(480), h: px(30), text_size: px(22) }
+
 // --- sos variant ---
 export const SOS_HEADER = { x: px(0), y: px(52), w: px(480), h: px(34), text_size: px(24), char_space: px(2) }
 export const SOS_AVATAR = { center_x: px(240), center_y: px(156), radius: px(58) }

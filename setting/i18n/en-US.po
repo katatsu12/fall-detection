@@ -51,3 +51,15 @@ msgstr "On the watch"
 
 msgid "watch.help"
 msgstr "Sensitivity and the siren are set on the watch: swipe up on the Fall Guard home screen."
+
+msgid "section.developer"
+msgstr "Developer"
+
+msgid "developer.record_url"
+msgstr "Recordings URL"
+
+msgid "developer.record_url_placeholder"
+msgstr "http://192.168.1.20:8787/recording"
+
+msgid "developer.help"
+msgstr "Debug builds record motion around every hard impact and send the files here (npm run webhook on your computer). Leave empty to keep them on the watch."

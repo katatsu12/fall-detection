@@ -36,7 +36,8 @@
             "page/alert",
             "page/result",
             "page/settings",
-            "page/probe"
+            "page/probe",
+            "page/record"
           ]
         },
         "app-service": {

@@ -130,7 +130,8 @@ fall-detection/
 │   ├── alert.js  alert.{r,s}.layout.js      # "Are you alright?" countdown
 │   ├── result.js result.{r,s}.layout.js    # "Glad you're OK" / "Contacting"
 │   ├── settings.js settings.{r,s}.layout.js # "How careful?" sensitivity
-│   └── probe.js  probe.{r,s}.layout.js      # background probe (developer screen, §10)
+│   ├── probe.js  probe.{r,s}.layout.js      # background probe (developer screen, §10)
+│   └── record.js record.{r,s}.layout.js    # staged recordings + rates (developer screen, §12)
 ├── utils/
 │   ├── fall-detector.js   # algorithm (unit-testable in Node)
 │   ├── prefs.js           # localStorage-backed settings + sensitivity → presets
@@ -138,15 +139,28 @@ fall-detection/
 │   ├── raise-detector.js  # raise-to-wake from the accel stream (pure, tested)
 │   ├── probe-store.js     # record shared by the probe service and its page
 │   ├── theme.js           # palette from the design
-│   └── demo-trace.js      # generated synthetic fall for the debug replay
-├── tools/render-mocks.py  # layout → PNG mocks (npm run mocks)
+│   ├── demo-trace.js      # generated synthetic fall for the debug replay
+│   ├── debug.js           # DEBUG switch, recorder on/off, frequency-mode override (§12)
+│   ├── ring-buffer.js     # typed-array sample history (pure, tested; v2 reuses it)
+│   ├── impact-trigger.js  # the 1.8 g candidate trigger (pure, tested; v2 reuses it)
+│   ├── candidate-recorder.js # windows around impacts, keep policy (pure, tested)
+│   ├── rate-meter.js      # sensor rate + jitter (pure, tested)
+│   ├── uploader.js        # one upload at a time with backoff (pure, tested)
+│   ├── recording-store.js # recordings, labels, day summaries in /data/rec
+│   └── recorder-session.js # recorder state shared across pages via globalData
+├── tools/
+│   ├── render-mocks.py    # layout → PNG mocks (npm run mocks)
+│   ├── webhook-dev-server.js # SOS test receiver + recording sink (npm run webhook)
+│   └── eval.js eval-lib.js   # npm run eval (§12.6)
+├── eval/report.json       # latest evaluation report, committed with detector changes
 ├── app-service/probe.js   # device background service: feasibility probe (§10)
-├── app-side/index.js      # SOS forwarding via fetch()
+├── app-side/index.js      # SOS forwarding via fetch(), recording upload
 ├── setting/index.js       # settings UI on the phone
+├── data/                  # recordings and public datasets (git-ignored)
 └── test/
-    ├── fall-detector.test.js
-    ├── raise-detector.test.js
-    └── fixtures/*.json    # recorded accel traces (real falls / ADLs)
+    ├── fall-detector.test.js  raise-detector.test.js
+    ├── ring-buffer, impact-trigger, candidate-recorder, rate-meter, uploader, eval .test.js
+    └── fixtures/*.json    # synthetic accel traces (falls / ADLs)
 ```
 
 ---
@@ -445,8 +459,9 @@ What the page does:
    (not worn). A wear-off also `reset()`s the detector so a half-seen fall
    can't span a gap.
 4. A 1 s `tick()` rolls the coverage ring (share of 5 s buckets that had
-   samples while worn, over the last 5 min), logs `[rate] NN Hz` every 5 s
-   when `DEBUG` — the **measured sample rate**, first unknown in §8 — and
+   samples while worn, over the last 5 min), logs `[rate] …` every 5 s
+   when `DEBUG` — the **measured sample rate** and callback jitter, first
+   unknown in §8 (format in §12.5) — and
    re-reads the stored sensitivity, rebuilding the detector if Settings
    changed it (that page is `push`ed on top, so Home never gets a fresh
    `onInit`), dims/undims the screen and re-arms the relaunch alarm every
@@ -675,8 +690,9 @@ shows `app-side/`. Stop collection before reading — the viewer buffers.
 #### 9e. What to check, in order
 
 1. **It runs.** Open the app on the watch: green ring, "You're covered".
-   The Device App log prints `[rate] NN Hz` every 5 s — that is the real
-   `FREQ_MODE_NORMAL` rate on this hardware (README §8, first unknown).
+   The Device App log prints `[rate] NORMAL accel 50.0 Hz dt 20/22/41 ms, …`
+   every 5 s — the real `FREQ_MODE_NORMAL` rate on this hardware and how
+   regular the callbacks are (README §8, first unknown; §12.5).
 2. **Wear gate.** Take the watch off: title → "Not on wrist", ring turns
    red. Put it back.
 3. **Simulate fall.** Long-press the ring: the "Are you alright?" page
@@ -698,10 +714,10 @@ shows `app-side/`. Stop collection before reading — the viewer buffers.
    `stillStd` and `reasons`. Tune `DEFAULTS` / `PRESETS` in
    `utils/fall-detector.js` until ADLs stay at zero and mattress falls
    fire; then `npm test` still has to pass.
-6. **Record traces** (later): a "Record" mode writing `{dt,x,y,z}` to
-   `@zos/fs` for 60 s, exported through the app-side, turns those sessions
-   into `test/fixtures/fall_*.json` / `adl_*.json` so tuning becomes
-   repeatable instead of manual.
+6. **Record traces**: done by the phase 1 recorder (§12). Everyday wear
+   records the motion around every hard impact, swipe left on Home runs the
+   staged protocol, both upload to `npm run webhook`, and `npm run eval`
+   scores the detector on them, so tuning is repeatable instead of manual.
 7. **Battery.** Leave it monitoring for a full day and note the drain; if
    unacceptable, drop to `FREQ_MODE_LOW` and re-tune, or shorten
    `KEEP_BRIGHT_MS` if step 4 showed the sensor survives screen-off.
@@ -760,12 +776,20 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
 
 ## 8. Things to measure early (they're not in the docs)
 
-| Unknown | How to find out |
-|---|---|
-| Actual Hz of `FREQ_MODE_LOW/NORMAL/HIGH` | Count `onChange` calls over 10 s on the target watch |
-| Whether `onChange` keeps firing with the screen off but page alive | Log timestamps to `@zos/fs`, wrist-down, wait 30 s, check |
-| `setPageBrightTime` vs. system max-screen-on settings interaction | Try it; some firmware caps it |
-| BLE `request()` timeout when the phone is out of range | Time a request with Bluetooth off on the phone |
+| Unknown | How to find out | Result |
+|---|---|---|
+| Actual Hz and jitter of `FREQ_MODE_LOW/NORMAL/HIGH`, accel and gyro | Record page (swipe left) → *Mode* cycles the mode; read the rates line or the `[rate]` log (§12.5) | _to fill_ |
+| Does `onChange` fire once per sample? | Compare the `[rate]` Hz with the mode's nominal rate; there is no batch/FIFO read in the API | _to fill_ |
+| Candidates per hour at the 1.8 g trigger | Day summaries: `candidates` ÷ `wornMs` (§12.4) | _to fill_ |
+| Battery drain per hour, per mode, with and without the gyroscope | Day summaries: battery % every 10 min; switch the recorder off on the record page for the no-gyro run | _to fill_ |
+| How long the wear sensor takes to report removal | Staged activity *Watch off, onto table*, or `wornOffAt` in `wear_off` recordings | _to fill_ |
+| Memory headroom for the ring buffers | Run HIGH with the gyro for an hour and watch for crashes in the Device App log | _to fill_ |
+| Whether `onChange` keeps firing with the screen off but page alive | Log timestamps to `@zos/fs`, wrist-down, wait 30 s, check | _to fill_ |
+| `setPageBrightTime` vs. system max-screen-on settings interaction | Try it; some firmware caps it | _to fill_ |
+| BLE `request()` timeout when the phone is out of range | Time a request with Bluetooth off on the phone | _to fill_ |
+
+When the rates are known, set `DEFAULT_MODE` in `utils/debug.js` to the
+lowest mode that gives at least 50 Hz (`HIGH` if none does).
 
 ## 9. Next-step ideas
 
@@ -775,6 +799,7 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
 - Auto-resume monitoring when the watch is re-worn (`Wear.onChange`).
 - Replace the threshold state machine with a small decision tree trained on
   your recorded fixtures — the `push(t,x,y,z)` interface stays the same.
+  This is now the detector v2 plan; phases 0–1 are §12.
 
 ## 10. Background monitoring — research and probe (2026-09-17)
 
@@ -934,3 +959,132 @@ harmless but pointless — pause before charging if it bothers you.
 - Side-service fetch — <https://docs.zepp.com/docs/reference/side-service-api/fetch/>
 - ZML (device ↔ phone messaging) — <https://github.com/zepp-health/zml>
 - Zeus CLI — <https://docs.zepp.com/docs/guides/tools/cli/>
+
+## 12. Detector v2, phases 0–1 — measure and record (implemented 2026-09-24)
+
+The v2 plan replaces the free-fall → impact → stillness chain with an
+impact trigger, features and a trained score. Nothing can be trained or
+tuned without real data, so phases 0 and 1 only **measure and record**; v1
+still makes every decision. All of it runs only when `DEBUG = true` in
+`utils/debug.js`, which also defaults the recorder to on. A release build
+(`DEBUG = false`) has none of it.
+
+### 12.1 Setup
+
+1. On your computer: `npm run webhook`. It prints
+   `http://<lan-ip>:8787/recording`.
+2. Phone: Zepp app → Fall Guard → Settings → **Developer → Recordings URL**,
+   paste that URL. Phone and computer must be on the same network.
+3. Install a debug build on the watch (§5 Step 9) and open the app. Home
+   now also runs the gyroscope and the recorder.
+
+Home asks the phone whether a Recordings URL is set before it uploads
+anything (`rec.ready`), and rechecks every 10 min, so an empty setting
+costs no BLE traffic. Files wait on the watch until it is set (up to 4 MB).
+
+### 12.2 Everyday recording
+
+`utils/candidate-recorder.js` runs the v2 trigger beside v1: a candidate
+opens when |a| exceeds **1.8 g**, and its t0 is the highest sample within
+the next second. When 10 s have passed, the window from 3 s before to 10 s
+after t0 is kept if:
+
+| `keep` | When | Weight |
+|---|---|---|
+| `v1_fall` | v1 alerted on this impact | 1 |
+| `v1_rejected` | v1 evaluated it and said no (a near-miss) | 1 |
+| `wear_off` | the watch came off during the window (`wornOffAt` says when) | 1 |
+| `sampled` | a random 10% of everything else | 10 |
+
+Every candidate, kept or not, adds a line to the day summary, so the
+candidate rate and false alarms per day can be computed from the 10% sample.
+
+A v1 alert opens the alert page, which vibrates and would pollute the
+accelerometer. So Home writes the alert's window straight away, at about
++3 s, marked `truncated`. It also passes the recording id to the result
+page: after **I'm fine** it asks **Did you fall? Yes / No** (10 s, then it
+closes unanswered). "I'm fine" alone is not a label, because people who
+fall and are unhurt press it too.
+
+### 12.3 Staged protocol — swipe left on Home
+
+`page/record.js` walks through 15 activities × 10 repeats: seven falls
+(forward, backward, sideways, slide off a chair, trip while walking, fall
+and try to get up, fall and lie still), then eight non-falls (flop onto a
+bed, sit hard on a sofa, slam a hand on a table, clap, jump, jog, stairs,
+watch off onto a table). Do the falls onto a mattress.
+
+**Record** counts down 3-2-1 with light buzzes, gives a strong buzz, then
+records 15 s and buzzes again when it has saved. **Skip** moves to the next
+activity, or cancels a countdown. Progress survives leaving the page.
+While the page is open, Home keeps sampling but feeds neither v1 nor
+everyday candidates, so no alert interrupts the session and no staged fall
+is ever filed as everyday activity.
+
+The page is also the phase 0 readout: the frequency mode (**Mode** cycles
+LOW / NORMAL / HIGH, and Home restarts its sensors in the new mode), live
+accel and gyro rates, and the number and size of files waiting to upload.
+Tap the bottom line to switch the recorder off, for example to measure
+battery drain without the gyroscope.
+
+### 12.4 Files
+
+The dev server saves to `data/recordings/`, which git ignores:
+
+```
+data/recordings/
+├── everyday/c-<t0>.json            candidate windows (+ label from the result page)
+├── staged/<session>/s-<t0>.json    staged windows (activity, fall, trial)
+└── summaries/<yyyymmdd>.json       day summary, re-sent every 10 min while it grows
+```
+
+A recording is `{ v, id, kind, t0, keep, weight, truncated, preMs, postMs,
+v1, label, accel: [[t, x, y, z]], gyro: [[t, gx, gy, gz]] }`. `t` is in ms
+from t0 (negative before the impact), accel in cm/s² as integers, gyro in
+°/s to one decimal. At 50 Hz, a candidate window is about 22 KB and a
+staged window about 25 KB. A day summary holds `wornMs`, `monitoredMs`,
+`candidates` as `[t0, peakG, v1, keep, weight, truncated]` rows, `samples`
+as `[t, battery %, accel Hz, gyro Hz, mode]` rows every 10 min, and the
+count of recordings evicted when the watch ran out of room.
+
+### 12.5 Rates
+
+Every 5 s the Device App log shows, for example:
+
+```
+[rate] NORMAL accel 49.8 Hz dt 20/22/41 ms, gyro 50.1 Hz dt 20/21/38 ms
+```
+
+That is the callback rate and the interval between callbacks as median /
+95th percentile / max, per sensor. A max far above the median means the OS
+batches or drops callbacks. The Accelerometer API has no batch read, so
+those samples are lost. Fill in the §8 table from these numbers.
+
+### 12.6 Evaluation — `npm run eval`
+
+```bash
+npm run eval                              # v1, normal preset: test/fixtures + data/recordings + data/public
+npm run eval -- --sweep                   # low / normal / high presets
+npm run eval -- --compare eval/old.json   # difference against an earlier report
+npm run eval -- --out none data/recordings/staged
+```
+
+It replays every trace through a fresh detector and prints recall (with a
+95% Wilson interval), specificity per activity, false alarms per day
+(weighted alarms ÷ worn hours × 16 waking hours), and alert latency. An
+everyday window only counts alarms for its own impact (within 1 s of t0),
+because neighbouring windows overlap. `eval/report.json` is rewritten on
+each run; commit it with every detector change so the baseline travels
+with the code. Today it holds v1 on the synthetic fixtures only.
+
+### 12.7 Checks on the watch
+
+1. Home runs as before, and the log shows `[rate]` lines with a gyro part.
+2. Long-press the ring (simulate fall) → **I'm fine** → **Did you fall?**
+   appears. Answer it. Within a minute the dev server logs
+   `saved data/recordings/everyday/c-….json` with `"simulated":true` in
+   the label, and `npm run eval` skips that file.
+3. Swipe left: the record page shows rates after a few seconds. Record one
+   *Clap*, and the dev server logs a `staged/…` file with about 750 rows.
+4. Leave the watch on for a day, then check the day summary's `wornMs` and
+   candidate count, and fill in the candidate rate in §8.

@@ -2,8 +2,9 @@
  * Phone settings page (Zepp app → Fall Guard → Settings).
  *
  * Writes to settingsStorage (string-only). The app-side reads these keys:
- *   contactName, contactPhone, webhookUrl, webhookToken
- * and pushes contactName to the watch whenever it changes.
+ *   contactName, contactPhone, webhookUrl, webhookToken, recordUrl
+ * and pushes contactName to the watch whenever it changes. recordUrl is the
+ * developer endpoint for phase 1 recordings (README §12).
  *
  * "Send test alert" works through storage too: this page sets
  * `testAlertRequest`, the app-side sends a test POST and writes
@@ -78,6 +79,15 @@ AppSettingsPage({
       ]),
 
       Section({ title: gettext('section.watch') }, [Text({ paragraph: true, style: STYLE.help }, gettext('watch.help'))]),
+
+      Section({ title: gettext('section.developer') }, [
+        TextInput({
+          label: gettext('developer.record_url'),
+          placeholder: gettext('developer.record_url_placeholder'),
+          settingsKey: 'recordUrl',
+        }),
+        Text({ paragraph: true, style: STYLE.help }, gettext('developer.help')),
+      ]),
     ])
   },
 })

@@ -13,3 +13,5 @@ selenium-debug.log
 *.ntvs*
 *.njsproj
 *.sln
+# phase 1 recordings and public datasets: personal movement data / licensed, never committed
+data/

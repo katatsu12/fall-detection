@@ -64,6 +64,18 @@ msgstr "Phone not reachable"
 msgid "result.done"
 msgstr "Done"
 
+msgid "result.fell_q"
+msgstr "Did you fall?"
+
+msgid "result.fell_yes"
+msgstr "Yes"
+
+msgid "result.fell_no"
+msgstr "No"
+
+msgid "result.thanks"
+msgstr "Thanks, noted"
+
 msgid "settings.title"
 msgstr "How careful?"
 
