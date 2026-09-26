@@ -70,6 +70,7 @@ are what the preset thresholds get tuned from.
 | SOS: 30 s countdown, "Get help now", phone relay to a webhook, emergency contact, phone settings page | Removed. The last version without the recorder is commit `b47079a`: `page/alert.js`, `page/result.*`, `app-side/`, `setting/`, `tools/webhook-dev-server.js`, `check.png` |
 | Phase 0–1 recorder, staged recordings, uploads, `npm run eval` | Branch `phase1-recording` (commit `fdecfa0`; taken off `main` in `5a1c005`) |
 | Detector v2 | The plan doc; v1 (`utils/fall-detector.js`) makes every decision |
+| Background probe (can a service run the detector?) | Removed 2026-09-24; research in §10, code in commit `0ec6e9c` |
 
 Steps 5–7 and §6 below describe the MVP. Earlier SOS details live in the
 git history.
@@ -135,14 +136,14 @@ Start/Stop toggle.
 "permissions": [
   "device:os.accelerometer",
   "device:os.gyroscope",
-  "device:os.notification",
-  "device:os.local_storage"
+  "device:os.local_storage",
+  "device:os.alarm"
 ]
 ```
 
-`device:os.bg_service` is only there for the background probe (§10) — the
-accelerometer can't be used in a service (§1.2), so the production path
-doesn't need it.
+The MVP needs neither `device:os.bg_service` nor `device:os.notification`:
+the background probe that used them (§10) was removed on 2026-09-24. The
+gyroscope permission is kept for detector v2.
 
 ### 1.5 Toolchain
 
@@ -188,8 +189,7 @@ fall-detection/
 ├── page/
 │   ├── index.js  index.{r,s}.layout.js      # Home: ring + facts, sensor wiring
 │   ├── alert.js  alert.{r,s}.layout.js      # "Fall detected": vibrate until OK
-│   ├── settings.js settings.{r,s}.layout.js # "How careful?" sensitivity
-│   └── probe.js  probe.{r,s}.layout.js      # background probe (developer screen, §10)
+│   └── settings.js settings.{r,s}.layout.js # "How careful?" sensitivity
 ├── utils/
 │   ├── fall-detector.js   # algorithm (unit-testable in Node)
 │   ├── prefs.js           # localStorage-backed settings + sensitivity → presets
@@ -197,11 +197,9 @@ fall-detection/
 │   ├── raise-detector.js  # raise-to-wake from the accel stream (pure, tested)
 │   ├── alert-log.js       # alert tally for the MVP test (pure, tested)
 │   ├── fall-diagnostics.js # "why didn't it alert?" debug line (pure, tested)
-│   ├── probe-store.js     # record shared by the probe service and its page
 │   ├── theme.js           # palette from the design
 │   └── demo-trace.js      # generated synthetic fall for the debug replay
 ├── tools/render-mocks.py  # layout → PNG mocks (npm run mocks)
-├── app-service/probe.js   # device background service: feasibility probe (§10)
 └── test/
     ├── fall-detector.test.js
     ├── raise-detector.test.js
@@ -338,10 +336,8 @@ permissions and naming — it is the file checked in at the repo root.
   "permissions": [
     "device:os.accelerometer",
     "device:os.gyroscope",
-    "device:os.notification",
     "device:os.local_storage",
-    "device:os.alarm",
-    "device:os.bg_service"
+    "device:os.alarm"
   ],
   "runtime": {
     "apiVersion": { "compatible": "3.0.0", "target": "3.0.0", "minVersion": "3.0" }
@@ -349,8 +345,7 @@ permissions and naming — it is the file checked in at the repo root.
   "targets": {
     "default": {
       "module": {
-        "page": { "pages": ["page/index", "page/alert", "page/settings", "page/probe"] },
-        "app-service": { "services": ["app-service/probe"] }
+        "page": { "pages": ["page/index", "page/alert", "page/settings"] }
       },
       "platforms": [
         { "st": "r", "dw": 480 },
@@ -366,7 +361,7 @@ permissions and naming — it is the file checked in at the repo root.
 
 - `configVersion: "v3"` is the current manifest format.
 - `runtime.apiVersion.minVersion: "3.0"` because Accelerometer / Gyroscope /
-  `notify` / `requestPermission` all start at API_LEVEL 3.0. Raise `target`
+  `@zos/alarm` / `requestPermission` all start at API_LEVEL 3.0. Raise `target`
   (and `minVersion`) to 3.6 only if you upgrade `@zeppos/zml` past 0.0.27.
 - `targets.default.platforms` uses the **shape-based** form: `st` is the screen
   type (`r` round, `s` square, `b` band) and `dw` the design width. One entry
@@ -377,9 +372,9 @@ permissions and naming — it is the file checked in at the repo root.
   **Amazfit Active** is square, 390×450, API_LEVEL 3.6) and
   `assets/default.<st>/icon.png`.
 - `module.page.pages` must list **every** page you navigate to.
-- `module.app-service.services` lists the **device** background services
-  (§10); `device:os.bg_service` is the matching permission and is also
-  requested at runtime with `requestPermission` before `start()`.
+- No `module.app-service`: the MVP runs nothing in the background. The
+  probe service that used to be listed there (§10) was removed on
+  2026-09-24.
 - `device:os.alarm` is for the monitor-mode relaunch alarm (§10.5);
   `utils/monitor-mode.js` also asks for it with `requestPermission` if
   `queryPermission` reports it as not granted.
@@ -529,7 +524,7 @@ Things that differ from the original sketch:
 
 - **No runtime permission request.** `device:os.accelerometer` is a static
   permission granted by `app.json`; `@zos/app requestPermission` is for
-  *dynamic* permissions such as `device:os.bg_service`.
+  *dynamic* permissions such as `device:os.alarm`.
 - **`app.js` must use zml's `BaseApp`.** `BasePage` reads its messaging
   channel from `getApp()._options.globalData`, so a plain `App({})` makes
   every `BasePage.onInit` throw.
@@ -552,9 +547,13 @@ strings in `page/i18n/en-US.po`.
    (`t`, `peakG`, `freefallMs`, …).
 2. `build` sets `setPageBrightTime` to 40 s and
    `pauseDropWristScreenOff({ duration: 0 })`, swallows swipes with
-   `onGesture(() => true)`, and starts
-   `Vibrator.start({ mode: VIBRATOR_SCENE_CALL })`, which repeats until
-   `stop()`.
+   `onGesture(() => true)`, and starts a strong burst
+   (`VIBRATOR_SCENE_STRONG_REMINDER`, about 1.2 s) that the page's own 1 s
+   timer restarts every 2 s. It is never a looping scene: with
+   `VIBRATOR_SCENE_CALL`, which loops until `stop()`, an alert whose page
+   stopped running (app in the background, screen off) could only be
+   silenced by deleting the app (2026-09-24). Bursts stop by themselves
+   within a second once the page stops.
 3. UI: red glow, "Fall detected", the time (`Time.getFormatHour()`), what
    the detector saw ("peak 3.4 g · 290 ms free fall"), "Vibration stops in
    {n}s", and a white **OK** pill.
@@ -695,17 +694,14 @@ before reading — the viewer buffers.
 7. **Battery.** Leave it monitoring for a full day and note the drain; if
    unacceptable, drop to `FREQ_MODE_LOW` and re-tune, or shorten
    `KEEP_BRIGHT_MS` if step 4 showed the sensor survives screen-off.
-8. **Background probe.** Swipe down on Home → *Start* → follow §10.3 and
-   fill in the results table there.
-9. **Monitor mode** (§10.5). Leave the watch alone for 20 s: the screen goes
+8. **Monitor mode** (§10.5). Leave the watch alone for 20 s: the screen goes
    black. Tap: it comes back. Let it dim again, lower the arm, raise it:
    it comes back (log `[g]` lines keep flowing throughout — the sensor
    never stopped). Press the side button to leave the app and start a
    stopwatch: Home should reopen by itself within 90 s and the Device App
    log shows `app on create invoke "relaunch"`. Tap the ring to pause, leave
-   the app: it must **not** come back. Swipe up/down must still open
-   Settings / the probe (a full-screen rect sits under the widgets to catch
-   taps). Finally check the watch face brightness is what it was before
+   the app: it must **not** come back. Swipe up must still open
+   Settings (a full-screen rect sits under the widgets to catch taps). Finally check the watch face brightness is what it was before
    (`[monitor] restored …` in the log means a previous run had left it
    dimmed).
 
@@ -725,8 +721,8 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
    `device:os.accelerometer` is static, see Step 4).
 2. Page keeps running; detector consumes samples at `FREQ_MODE_NORMAL`.
 3. Fall signature matched → `replace('page/alert')`, sensor stopped.
-4. Watch vibrates in the `VIBRATOR_SCENE_CALL` pattern; the screen shows
-   "Fall detected", the time, peak g and free-fall ms.
+4. Watch vibrates in 1.2 s bursts every 2 s; the screen shows "Fall
+   detected", the time, peak g and free-fall ms.
 5. **OK**, or 30 s without it → vibration stops → back to Home, where
    monitoring restarts. Nothing is sent anywhere (MVP).
 
@@ -736,8 +732,8 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
   services, so detection stops when the user leaves the app or the OS reclaims
   the page. Monitor mode (§10.5) narrows the gap to ≤ 90 s and keeps the
   screen black meanwhile, but the app still owns the watch while it runs.
-  §10 has the full research and a probe that measures what a service *can*
-  do on your firmware.
+  §10 has the research; its probe service was removed from the MVP and is
+  in git history.
 - **No outbound alert (MVP).** A fall only vibrates the watch; nobody else
   is told. When SOS returns it needs BLE range to the phone, so it will also
   need an on-watch fallback, such as a loud `notify()` plus repeating
@@ -766,6 +762,13 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
   your recorded fixtures — the `push(t,x,y,z)` interface stays the same.
 
 ## 10. Background monitoring — research and probe (2026-09-17)
+
+> **Probe removed from the app on 2026-09-24.** On that day the watch kept
+> buzzing until the app was deleted, and this service (its own detector, its
+> own vibration, survives closing the app) was one of the two suspects; a
+> background part like that has no place in the MVP. The research below
+> still stands. `app-service/probe.js`, `page/probe.js` and
+> `utils/probe-store.js` are in commit `0ec6e9c`.
 
 **Question:** can detection + vibration run with the app closed and the
 screen off?
@@ -889,7 +892,7 @@ nothing here depends on the probe's outcome.
 | Wake | full-screen black `FILL_RECT` under everything; `utils/raise-detector.js` | A tap anywhere calls `wake()`. Every accelerometer sample also feeds the raise detector: once the watch has been away from face-up (z/‖a‖ < 0.5 for 300 ms) and comes back face-up (≥ 0.8 for 300 ms) the screen wakes — one raise, one wake; a watch lying face-up never fires. `npm test` covers it. |
 | Shared "awake" deadline | `keepAwake()` / `isAwake()` in `getApp().globalData` | Settings is pushed on top of Home, and Home's tick would dim underneath it; Settings bumps the deadline on build and every tap instead of Home needing an `onResume`. |
 | Clock | `L.CLOCK`, `Time.getFormatHour()` | Home is the wearer's screen all day, so it shows the time when awake. |
-| Dead-man's switch | `armRelaunch()` / `disarmRelaunch()`; `@zos/alarm set({ url: 'page/index', delay: 90, repeat_type: REPEAT_ONCE, param: 'relaunch' })` | Home arms on start and re-arms every 30 s (`REARM_MS`), always setting the new alarm before cancelling the old one. If the wearer presses the side button or the OS kills the page, the pending alarm opens Home ≤ 90 s later and `AUTO_START` resumes monitoring. `onFallDetected` disarms first (the alert flow returns by itself); `pause()` — a tap on the ring while awake — is the only user action that disarms. `app.js` logs `app on create invoke "relaunch"` when the alarm was the launcher. |
+| Dead-man's switch | `armRelaunch()` / `disarmRelaunch()`; `@zos/alarm set({ url: 'page/index', delay: 90, repeat_type: REPEAT_ONCE, param: 'relaunch' })` | Home arms on start and re-arms every 30 s (`REARM_MS`), always setting the new alarm before cancelling the old one. If the wearer presses the side button or the OS kills the page, the pending alarm opens Home ≤ 90 s later and `AUTO_START` resumes monitoring. `openAlert()` disarms first (the alert flow returns by itself); `pause()` — a tap on the ring while awake — is the only user action that disarms. Arming and disarming cancel every alarm the app owns (`getAllAlarms()`): each page is its own bundle, so a Home re-created by `replace()` or a relaunch can't see the alarm id an earlier Home kept, and would otherwise leave it pending. `app.js` logs `app on create invoke "relaunch"` when the alarm was the launcher. |
 
 To verify on hardware (9e-9): that brightness `5` with hidden widgets is
 really black on your panel (try `0` if not — and check the app isn't

@@ -7,10 +7,16 @@
  * detection can be told from a false one while testing. Nothing leaves the
  * watch; the SOS flow comes back in a later version.
  *
+ * The vibration is a finite pattern restarted every BUZZ_EVERY_S by this
+ * page's own timer, never a looping scene: if the page is suspended or dies
+ * (screen off, app in the background, a crash), the buzzing stops within a
+ * second instead of running until the app is uninstalled (seen 2026-09-24
+ * with VIBRATOR_SCENE_CALL).
+ *
  * Navigation is replace() both ways (index → alert → index), so every page
  * starts fresh.
  */
-import { Vibrator, VIBRATOR_SCENE_CALL, Time } from '@zos/sensor'
+import { Vibrator, VIBRATOR_SCENE_STRONG_REMINDER, Time } from '@zos/sensor'
 import { replace } from '@zos/router'
 import { setPageBrightTime, pauseDropWristScreenOff, resetDropWristScreenOff } from '@zos/display'
 import { onGesture, offGesture } from '@zos/interaction'
@@ -21,6 +27,7 @@ import * as L from 'zosLoader:./alert.[pf].layout.js'
 import { COLOR, hideStatusBar } from '../utils/theme'
 
 const MAX_S = 30 // stop vibrating and return to monitoring after this long without OK
+const BUZZ_EVERY_S = 2 // restart the ~1.2 s STRONG_REMINDER pattern this often while waiting for OK
 const HOME = 'page/index'
 
 Page(
@@ -46,7 +53,7 @@ Page(
       onGesture(() => true)
 
       this.state.vib = new Vibrator()
-      this.state.vib.start({ mode: VIBRATOR_SCENE_CALL }) // repeats until stop()
+      this.buzz()
 
       for (const g of L.GLOW) createWidget(widget.CIRCLE, { ...g, color: COLOR.red })
       const text = (geo, value, color) =>
@@ -93,7 +100,20 @@ Page(
       const s = this.state
       s.remaining -= 1
       if (s.remaining <= 0) return this.finish()
+      if ((MAX_S - s.remaining) % BUZZ_EVERY_S === 0) this.buzz()
       s.widgets.stops.setProperty(prop.TEXT, this.stopsText())
+    },
+
+    /** One finite burst (~1.2 s). Only this page's timer starts the next one, so it can never outlive the page. */
+    buzz() {
+      const s = this.state
+      if (s.done || !s.vib) return
+      try {
+        s.vib.stop()
+        s.vib.start({ mode: VIBRATOR_SCENE_STRONG_REMINDER })
+      } catch (e) {
+        console.log('[alert] vibrate failed', e)
+      }
     },
 
     /** OK, or MAX_S without an answer: stop vibrating and go back to monitoring. */
@@ -112,7 +132,13 @@ Page(
         clearInterval(s.timer)
         s.timer = null
       }
-      if (s.vib) s.vib.stop()
+      if (s.vib) {
+        try {
+          s.vib.stop()
+        } catch (e) {
+          /* already stopped */
+        }
+      }
     },
 
     onDestroy() {

@@ -15,10 +15,8 @@
   "permissions": [
     "device:os.accelerometer",
     "device:os.gyroscope",
-    "device:os.notification",
     "device:os.local_storage",
-    "device:os.alarm",
-    "device:os.bg_service"
+    "device:os.alarm"
   ],
   "runtime": {
     "apiVersion": {
@@ -34,13 +32,7 @@
           "pages": [
             "page/index",
             "page/alert",
-            "page/settings",
-            "page/probe"
-          ]
-        },
-        "app-service": {
-          "services": [
-            "app-service/probe"
+            "page/settings"
           ]
         }
       },

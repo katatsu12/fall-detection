@@ -18,7 +18,6 @@
  *   tap the ring (awake) → pause / resume monitoring
  *   long-press the ring  → replay a synthetic fall (DEBUG only)
  *   swipe up             → sensitivity settings
- *   swipe down           → background probe (DEBUG only, README §10)
  *
  * Navigation to/from the alert flow uses replace(), so each page starts
  * fresh and monitoring restarts via AUTO_START when the flow returns here.
@@ -36,7 +35,7 @@ import {
   setWakeUpRelaunch,
 } from '@zos/display'
 import { replace, push } from '@zos/router'
-import { onGesture, offGesture, GESTURE_UP, GESTURE_DOWN } from '@zos/interaction'
+import { onGesture, offGesture, GESTURE_UP } from '@zos/interaction'
 import { createWidget, widget, prop, align, event } from '@zos/ui'
 import { getText } from '@zos/i18n'
 import { BasePage } from '@zeppos/zml/base-page'
@@ -198,10 +197,6 @@ Page(
         keepAwake(AWAKE_MS)
         if (g === GESTURE_UP) {
           push({ url: 'page/settings' })
-          return true
-        }
-        if (DEBUG && g === GESTURE_DOWN) {
-          push({ url: 'page/probe' })
           return true
         }
         return false

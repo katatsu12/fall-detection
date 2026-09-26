@@ -18,7 +18,7 @@
  *    and the alarm brings monitoring back; only an explicit pause disarms.
  */
 import { getBrightness, setBrightness, getAutoBrightness, setAutoBrightness } from '@zos/display'
-import { set as setAlarm, cancel as cancelAlarm, REPEAT_ONCE } from '@zos/alarm'
+import { set as setAlarm, cancel as cancelAlarm, getAllAlarms, REPEAT_ONCE } from '@zos/alarm'
 import { queryPermission, requestPermission } from '@zos/app'
 import { localStorage } from '@zos/storage'
 
@@ -141,7 +141,29 @@ function alarmAllowed() {
   return false // this attempt is skipped; the next re-arm retries
 }
 
-/** Point a fresh alarm at `url`, then drop the previous one — never a gap. */
+/**
+ * Cancel every alarm this app owns except `keep`. Each page is its own
+ * bundle with its own `alarmId`, so a Home re-created by replace() or a
+ * relaunch can't see the alarm an earlier Home set; getAllAlarms() can.
+ */
+function cancelAll(keep) {
+  let ids = alarmId ? [alarmId] : []
+  try {
+    ids = getAllAlarms() || ids
+  } catch (e) {
+    /* older firmware: fall back to the one we know */
+  }
+  for (const id of ids) {
+    if (id === keep) continue
+    try {
+      cancelAlarm(id)
+    } catch (e) {
+      console.log('[monitor] alarm cancel failed', id, e)
+    }
+  }
+}
+
+/** Point a fresh alarm at `url`, then drop every other one — never a gap, never more than one. */
 export function armRelaunch(url) {
   if (!alarmAllowed()) return false
   const id = setAlarm({ url, delay: RELAUNCH_S, repeat_type: REPEAT_ONCE, store: false, param: 'relaunch' })
@@ -149,14 +171,13 @@ export function armRelaunch(url) {
     console.log('[monitor] alarm set failed')
     return false
   }
-  if (alarmId) cancelAlarm(alarmId)
+  cancelAll(id)
   alarmId = id
   return true
 }
 
 export function disarmRelaunch() {
-  if (!alarmId) return
-  cancelAlarm(alarmId)
+  cancelAll(0)
   alarmId = 0
 }
 
