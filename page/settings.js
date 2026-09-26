@@ -1,10 +1,12 @@
 /**
- * Sensitivity — "How careful?" (design 2A). Reached by swiping up on Home.
- * Three levels named by behaviour, plus the siren toggle (hidden until sound
- * exists, see SIREN_READY). Persists via utils/prefs; Home (still alive
- * underneath, since this page is pushed) polls the stored value in its tick
- * and rebuilds its detector when it changes.
+ * Sensitivity — "How careful?" (design 2A). Reached by swiping up on Home;
+ * picking a level saves it and goes back there. Three levels named by
+ * behaviour, plus the siren toggle (hidden until sound exists, see
+ * SIREN_READY). Persists via utils/prefs; Home (still alive underneath,
+ * since this page is pushed) polls the stored value in its tick and
+ * rebuilds its detector when it changes.
  */
+import { back } from '@zos/router'
 import { createWidget, widget, prop, align, event } from '@zos/ui'
 import { getText } from '@zos/i18n'
 import { BasePage } from '@zeppos/zml/base-page'
@@ -15,6 +17,7 @@ import { keepAwake } from '../utils/monitor-mode'
 
 const AWAKE_MS = 20000 // Home is alive underneath and dims when nobody interacts — keep it lit while here
 const SIREN_READY = false // no alert sound exists yet (README §2b), so the switch would promise nothing
+const BACK_DELAY_MS = 300 // long enough to see the radio fill before Home comes back
 
 const LEVELS = [
   { id: SENSITIVITY.RELAXED, label: 'settings.relaxed', sub: 'settings.relaxed_sub' },
@@ -25,7 +28,7 @@ const LEVELS = [
 Page(
   BasePage({
     name: 'settings',
-    state: { sensitivity: SENSITIVITY.BALANCED, siren: true, rows: [], toggle: {} },
+    state: { sensitivity: SENSITIVITY.BALANCED, siren: true, rows: [], toggle: {}, backTimer: null },
 
     onInit() {
       this.state.sensitivity = getPref('sensitivity')
@@ -79,11 +82,16 @@ Page(
       this.render()
     },
 
+    /** Save the level, show it for a moment, then go back to Home. */
     select(id) {
+      const s = this.state
+      if (s.backTimer) return // already leaving: a second back() would go past Home and close the app
       keepAwake(AWAKE_MS)
-      this.state.sensitivity = id
+      s.sensitivity = id
       setPref('sensitivity', id)
       this.render()
+      // From a fresh tick, not from inside the tap's own callback (README Step 5).
+      s.backTimer = setTimeout(() => back(), BACK_DELAY_MS)
     },
 
     setSiren(v) {
@@ -112,6 +120,11 @@ Page(
       t.track.setProperty(prop.MORE, { ...L.TOGGLE.track, color: s.siren ? COLOR.green : COLOR.radioOff })
       t.knobOn.setProperty(prop.VISIBLE, s.siren)
       t.knobOff.setProperty(prop.VISIBLE, !s.siren)
+    },
+
+    // Swiped back before the timer fired: its back() would now run on Home and close the app.
+    onDestroy() {
+      if (this.state.backTimer) clearTimeout(this.state.backTimer)
     },
   }),
 )

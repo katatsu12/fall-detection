@@ -221,7 +221,7 @@ screens return with SOS.
 |---|---|---|
 | Home — "You're covered" | `page/index` | Simplified from the design: a single coverage ring with the shield, centred, the state title beneath it (covered / paused / not on wrist) and a clock line above, since in monitor mode this screen *is* the wearer's watch face. The three info rows were dropped on 2026-09-16. For the MVP test a last line counts alerts: "No alerts today" / "2 alerts today · last 14:32". |
 | Fall detected | `page/alert` | Red glow, "Fall detected", the time, what the detector saw ("peak 3.4 g · 290 ms free fall"), "Vibration stops in 28s", white **OK** pill. Vibrates until OK, 30 s at most. |
-| Sensitivity — "How careful?" | `page/settings` | Relaxed / Balanced / Watchful radio rows (→ `PRESETS.low/normal/high`). The *Watch siren* toggle is hidden until alert sound exists. |
+| Sensitivity — "How careful?" | `page/settings` | Relaxed / Balanced / Watchful radio rows (→ `PRESETS.low/normal/high`). Picking one saves it and returns to Home. The *Watch siren* toggle is hidden until alert sound exists. |
 
 Interactions the design leaves implicit:
 
@@ -236,7 +236,10 @@ Interactions the design leaves implicit:
 - Navigation through the alert flow is `replace()` both ways
   (`index → alert → index`), so every page is built fresh.
 - Sensitivity is `push()`ed on top of Home instead, so Home stays alive
-  underneath. API 3.0 pages have no `onResume`, so Home re-reads the stored
+  underneath. Picking a level goes `back()` to it 0.3 s later, once the
+  radio has visibly filled; further taps in that time are ignored, because
+  a second `back()` would close the app, and swiping back first cancels the
+  timer. API 3.0 pages have no `onResume`, so Home re-reads the stored
   sensitivity in its 1 s tick and rebuilds the detector when it changed
   (`[detector] rebuilt for sensitivity …` in the log); an evaluation in
   progress is left to finish first.
@@ -676,11 +679,13 @@ before reading — the viewer buffers.
    app come back (setWakeUpRelaunch)? Did the Hz counter keep running
    while dark? This answers §8's second unknown and decides whether
    `KEEP_BRIGHT_MS` can be shortened to save battery.
-4b. **Settings round-trip.** Swipe up, pick *Watchful*, swipe back: within a
-   second the log shows `[detector] rebuilt for sensitivity watchful`. While
-   on the Sensitivity page, swipe up once more — if a *second* Sensitivity
-   page opens, `onGesture` handlers are app-global rather than per-page and
-   Home's handler needs guarding (the docs don't say which it is).
+4b. **Settings round-trip.** Swipe up, pick *Watchful*: Home comes back by
+   itself, and within a second the log shows `[detector] rebuilt for
+   sensitivity watchful`. Swipe up again and double-tap *Balanced*: you land
+   on Home once and the app stays open. Swipe up once more and, before
+   picking, swipe up again — if a *second* Sensitivity page opens,
+   `onGesture` handlers are app-global rather than per-page and Home's
+   handler needs guarding (the docs don't say which it is).
 5. **Real falls.** Onto a mattress, wrist-worn, 5–10 reps each of forward,
    backward and sideways, plus a sitting-to-floor slump. Then ADLs: sit down
    hard, clap, drop the arm onto a table, run 30 s, put the watch on a table.
