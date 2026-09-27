@@ -13,6 +13,10 @@
  * app, or the OS killing it, brings Home back within RELAUNCH_S; only an
  * explicit pause disarms it.
  *
+ * While the wearer is covered and the screen is awake, a thin ring "beeps"
+ * out of the coverage ring every PULSE_PERIOD_MS (utils/pulse.js). Its timer
+ * only runs then, so a dimmed screen pays nothing for it.
+ *
  * Interaction:
  *   tap anywhere         → wake the screen
  *   tap the ring (awake) → pause / resume monitoring
@@ -58,6 +62,8 @@ import {
 import { DEMO_FALL } from '../utils/demo-trace'
 import { addAlert, summarizeAlerts, formatTime } from '../utils/alert-log'
 import { createDiagnostics, diagText } from '../utils/fall-diagnostics'
+import { pulseFrames, PULSE_FRAME_MS, PULSE_FRAMES, PULSE_PERIOD_MS } from '../utils/pulse'
+import { formatDate } from '../utils/date-text'
 
 const AUTO_START = true // start monitoring as soon as the page opens
 const DEBUG = true // long-press the ring to simulate a fall; log sample rate
@@ -105,12 +111,15 @@ Page(
       buckets: [],
       alerts: [], // utils/alert-log.js: every real detection, for the "N alerts today" line
       alertsShown: '', // text currently on that line
-      diag: null, // DEBUG: utils/fall-diagnostics.js — why the last jolt did or didn't alert
-      gSum: 0, // DEBUG: |a| summed over the current second…
-      gCount: 0,
-      liveG: 0, // …and its mean over the last second, shown next to the clock
+      clockShown: '', // …and on the clock and date lines, so they're only redrawn when they change
+      dateShown: '',
+      dateNames: null, // { weekdays, months } from page/i18n, for utils/date-text.js
+      diag: null, // DEBUG: utils/fall-diagnostics.js — logs why each jolt did or didn't alert ([diag])
       simulating: false,
       alerting: false, // a fall was detected; the alert page opens on the next timer tick
+      pulse: [], // utils/pulse.js: the ARC frames of one beep around the ring
+      pulseTimer: null,
+      pulseStep: 0,
       widgets: {},
     },
 
@@ -120,6 +129,7 @@ Page(
       restoreDisplay() // a previous run may have died while dimmed
       keepAwake(AWAKE_MS)
       this.state.clock = new Time()
+      this.state.dateNames = { weekdays: getText('home.weekdays').split(','), months: getText('home.months').split(',') }
       this.state.raise = createRaiseDetector()
       this.state.alerts = loadAlerts()
       if (DEBUG) this.state.diag = createDiagnostics({}, (a) => console.log('[diag]', diagText(a)))
@@ -158,11 +168,15 @@ Page(
 
       // Bottom of the stack: a black full-screen rect so a tap anywhere wakes a dimmed screen.
       createWidget(widget.FILL_RECT, { ...L.SCREEN, color: COLOR.bg }).addEventListener(event.CLICK_UP, () => this.wake())
+      // The beep, under everything else so it grows out from behind the ring; hidden until setPulse() runs it.
+      this.state.pulse = pulseFrames(L.RING, { ...L.PULSE, color: COLOR.green })
+      w.pulse = createWidget(widget.ARC, this.state.pulse[0])
+      w.pulse.setProperty(prop.VISIBLE, false)
 
       w.clock = createWidget(widget.TEXT, {
         ...L.CLOCK,
-        text: this.clockText(),
-        color: COLOR.muted,
+        text: '',
+        color: COLOR.text,
         align_h: align.CENTER_H,
         align_v: align.CENTER_V,
       })
@@ -178,6 +192,13 @@ Page(
       w.shield = createWidget(widget.IMG, { ...L.SHIELD, auto_scale: true })
       w.shield.addEventListener(event.CLICK_UP, () => this.onTap())
 
+      w.date = createWidget(widget.TEXT, {
+        ...L.DATE,
+        text: '',
+        color: COLOR.muted,
+        align_h: align.CENTER_H,
+        align_v: align.CENTER_V,
+      })
       w.title = createWidget(widget.TEXT, {
         ...L.TITLE,
         text: getText('home.paused'),
@@ -266,6 +287,7 @@ Page(
      */
     stopMonitoring(refresh = true) {
       const s = this.state
+      this.setPulse(false, refresh)
       if (s.accel) {
         s.accel.offChange(s.accelCb)
         s.accel.stop()
@@ -316,11 +338,9 @@ Page(
       s.bucket.samples++
       if (s.raise.push(now, x, y, z) && isDimmed()) this.wake()
       const g = magnitudeG(x, y, z)
-      s.gSum += g
-      s.gCount++
       if (!s.worn) {
         s.bucket.worn = false
-        if (s.diag) s.diag.push(now, g, 'OFF', 'OFF') // shows "off wrist" for jolts while detection is paused
+        if (s.diag) s.diag.push(now, g, 'OFF', 'OFF') // logs "off wrist" for jolts while detection is paused
         return
       }
       if (DEBUG && s.samplesSinceLog === 1) console.log('[g]', g.toFixed(2))
@@ -335,11 +355,6 @@ Page(
       if (s.alerting) return
       const now = Date.now()
       this.syncDetector()
-      if (s.gCount) {
-        s.liveG = s.gSum / s.gCount
-        s.gSum = 0
-        s.gCount = 0
-      }
       if (now - s.bucket.startedAt >= COVERAGE_BUCKET_MS) {
         s.buckets.push(s.bucket.samples > 0 && s.bucket.worn)
         if (s.buckets.length > COVERAGE_BUCKETS) s.buckets.shift()
@@ -366,16 +381,20 @@ Page(
     clockText() {
       const c = this.state.clock
       const m = c.getMinutes()
-      const time = `${c.getFormatHour()}:${m < 10 ? '0' : ''}${m}`
-      // DEBUG: the mean |a| of the last second must read about 1.00 g at rest. Anything far from that means
-      // the sensor isn't reporting cm/s² and no fall can ever trigger (README "If a test fall doesn't alert").
-      return DEBUG && this.state.liveG ? `${time} · ${this.state.liveG.toFixed(2)} g` : time
+      return `${c.getFormatHour()}:${m < 10 ? '0' : ''}${m}`
     },
 
-    /** "No alerts today" / "2 alerts today · last 14:32" — the MVP test's false-alarm tally. */
+    /** "Sat, Sep 26", in the order and names page/i18n gives. */
+    dateText() {
+      const c = this.state.clock
+      const { weekdays, months } = this.state.dateNames
+      return formatDate(getText('home.date'), weekdays, months, { weekday: c.getDay(), day: c.getDate(), month: c.getMonth() })
+    },
+
+    /** "2 alerts today · last 14:32" — the MVP test's false-alarm tally; empty on a day without alerts. */
     alertsLine() {
       const { today, last } = summarizeAlerts(this.state.alerts, Date.now())
-      if (!today) return { text: getText('home.alerts_none'), color: COLOR.muted }
+      if (!today) return { text: '', color: COLOR.redSoft }
       const time = formatTime(last.t, this.state.clock.getHourFormat() === TIME_HOUR_FORMAT_12)
       const key = today === 1 ? 'home.alerts_one' : 'home.alerts_many'
       return { text: getText(key).replace('{n}', today).replace('{time}', time), color: COLOR.redSoft }
@@ -399,7 +418,8 @@ Page(
       if (!w.title) return
 
       const visible = !isDimmed()
-      for (const k of ['clock', 'track', 'ring', 'disc', 'shield', 'title', 'alerts']) w[k].setProperty(prop.VISIBLE, visible)
+      for (const k of ['clock', 'track', 'ring', 'disc', 'shield', 'date', 'title', 'alerts']) w[k].setProperty(prop.VISIBLE, visible)
+      this.setPulse(visible && s.running && s.worn) // "covered", and someone can see it
       if (!visible) return
 
       let title = 'home.paused'
@@ -408,11 +428,18 @@ Page(
         title = s.worn ? 'home.covered' : 'home.not_worn'
         ringColor = s.worn ? COLOR.green : COLOR.redSoft
       }
-      w.clock.setProperty(prop.TEXT, this.clockText())
+      const clock = this.clockText()
+      if (clock !== s.clockShown) {
+        s.clockShown = clock
+        w.clock.setProperty(prop.TEXT, clock)
+      }
+      const date = this.dateText()
+      if (date !== s.dateShown) {
+        s.dateShown = date
+        w.date.setProperty(prop.TEXT, date)
+      }
       w.title.setProperty(prop.TEXT, getText(title))
-      // DEBUG: for 30 s after a jolt this line says why it did or didn't alert, then the tally returns.
-      const attempt = s.diag && s.diag.latest(Date.now())
-      const line = attempt ? { text: diagText(attempt), color: COLOR.caption } : this.alertsLine()
+      const line = this.alertsLine()
       if (line.text !== s.alertsShown) {
         // setProperty(MORE) redraws the widget, so only when the line changes (a new alert, or midnight)
         s.alertsShown = line.text
@@ -423,6 +450,39 @@ Page(
         color: ringColor,
         end_angle: L.RING.start_angle + Math.max(1, 360 * this.coverage()),
       })
+    },
+
+    /**
+     * Start or stop the beep. `refresh` is false when the page is going away:
+     * then only the timer stops and the widget is left alone.
+     */
+    setPulse(on, refresh = true) {
+      const s = this.state
+      if (on) {
+        if (!s.pulseTimer) {
+          s.pulseStep = 0
+          s.pulseTimer = setInterval(() => this.pulseFrame(), PULSE_FRAME_MS)
+        }
+        return
+      }
+      if (!s.pulseTimer) return
+      clearInterval(s.pulseTimer)
+      s.pulseTimer = null
+      if (refresh) s.widgets.pulse.setProperty(prop.VISIBLE, false)
+    },
+
+    /** One PULSE_FRAME_MS step: PULSE_FRAMES frames of the ring, then hidden until the next beep. */
+    pulseFrame() {
+      const s = this.state
+      const w = s.widgets.pulse
+      const i = s.pulseStep
+      s.pulseStep = (i + 1) % Math.round(PULSE_PERIOD_MS / PULSE_FRAME_MS)
+      if (i < PULSE_FRAMES) {
+        w.setProperty(prop.MORE, s.pulse[i]) // precomputed: no maths or allocation per frame
+        if (i === 0) w.setProperty(prop.VISIBLE, true)
+      } else if (i === PULSE_FRAMES) {
+        w.setProperty(prop.VISIBLE, false)
+      }
     },
 
     /**

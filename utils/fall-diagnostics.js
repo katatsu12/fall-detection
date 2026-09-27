@@ -15,8 +15,9 @@
  *   v1's reasons     v1 evaluated and rejected it, e.g. 'not_still'
  *   'fall'           v1 raised the alert
  *
- * latest(now) returns the strongest attempt of the last `windowMs`, which is
- * what Home shows while you get up after a test fall.
+ * Home writes every finished attempt to the Device App log as a `[diag]`
+ * line; nothing is shown on the watch. latest(now) returns the strongest
+ * attempt of the last `windowMs`.
  */
 import { STATE } from './fall-detector.js'
 
@@ -116,7 +117,7 @@ const SHORT = {
   off_wrist: 'off wrist',
 }
 
-/** Home's debug line, e.g. "hit 3.1 g · drop 0.42 g · moved". */
+/** The `[diag]` log line, e.g. "hit 3.1 g · drop 0.42 g · moved". */
 export function diagText(a) {
   const drop = Number.isFinite(a.dipG) ? a.dipG.toFixed(2) : '–'
   return `hit ${a.peakG.toFixed(1)} g · drop ${drop} g · ${SHORT[a.verdict] || a.verdict}`

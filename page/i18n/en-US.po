@@ -10,8 +10,14 @@ msgstr "Paused"
 msgid "home.not_worn"
 msgstr "Not on wrist"
 
-msgid "home.alerts_none"
-msgstr "No alerts today"
+msgid "home.date"
+msgstr "{weekday}, {month} {day}"
+
+msgid "home.weekdays"
+msgstr "Mon,Tue,Wed,Thu,Fri,Sat,Sun"
+
+msgid "home.months"
+msgstr "Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec"
 
 msgid "home.alerts_one"
 msgstr "1 alert today · last {time}"

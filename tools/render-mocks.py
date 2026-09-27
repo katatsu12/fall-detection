@@ -4,16 +4,21 @@ Render the page/*.layout.js geometry to PNG mocks (round + square) without the
 simulator, so layout tweaks can be checked against the design canvas quickly.
 
     npm run mocks      → tools/mocks/sheet.png (+ one PNG per screen/shape)
+                         tools/mocks/home-pulse.{r,s}.gif (Home's beep, in real time)
 
 Icons are drawn as green outlines; everything else uses the real coordinates,
 colours and text sizes. Requires Pillow (pip install pillow) and Node.
 """
 import json, os, re, subprocess, sys, tempfile
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, 'tools', 'mocks')
 os.makedirs(OUT, exist_ok=True)
+C = dict(bg='#000000', white='#ffffff', ink='#101113', text='#ffffff', textSoft='#e8e9eb', caption='#c6c9ce',
+         muted='#9a9da3', dim='#8a8f96', faint='#6e7278', card='#1d1e20', avatar='#2f3237', track='#2a2d31',
+         radioOff='#4a4e54', green='#1fc08a', greenDeep='#10281f', red='#ff3b2f', redSoft='#ff6b5c', redCard='#2a1712')
 
 # --- 1. evaluate the layout modules in Node with px() stubbed --------------
 tmp = tempfile.mkdtemp()
@@ -25,15 +30,16 @@ for page in pages:
         open(os.path.join(tmp, f'{page}.{shape}.mjs'), 'w').write(src)
 dump = "import { writeFileSync } from 'node:fs'\nconst out = {}\n"
 dump += "for (const p of %s) for (const s of ['r','s']) out[`${p}.${s}`] = await import(`./${p}.${s}.mjs`)\n" % json.dumps(pages)
+# Home's beep frames come from the same pure module the watch runs.
+dump += "const P = await import(%s)\n" % json.dumps(Path(ROOT, 'utils', 'pulse.js').as_uri())
+dump += "for (const s of ['r','s']) out[`pulse.${s}`] = P.pulseFrames(out[`index.${s}`].RING, { ...out[`index.${s}`].PULSE, color: %d })\n" % int(C['green'][1:], 16)
+dump += "out.pulse = { frameMs: P.PULSE_FRAME_MS, frames: P.PULSE_FRAMES, periodMs: P.PULSE_PERIOD_MS }\n"
 dump += "writeFileSync('layouts.json', JSON.stringify(out, (k, v) => (typeof v === 'function' ? undefined : v)))\n"
 open(os.path.join(tmp, 'dump.mjs'), 'w').write(dump)
 subprocess.run(['node', 'dump.mjs'], cwd=tmp, check=True)
 L = json.load(open(os.path.join(tmp, 'layouts.json')))
 
 # --- 2. draw ---------------------------------------------------------------
-C = dict(bg='#000000', white='#ffffff', ink='#101113', text='#ffffff', textSoft='#e8e9eb', caption='#c6c9ce',
-         muted='#9a9da3', dim='#8a8f96', faint='#6e7278', card='#1d1e20', avatar='#2f3237', track='#2a2d31',
-         radioOff='#4a4e54', green='#1fc08a', greenDeep='#10281f', red='#ff3b2f', redSoft='#ff6b5c', redCard='#2a1712')
 
 def font(sz):
     for p in ['/System/Library/Fonts/Supplemental/Arial Bold.ttf', '/System/Library/Fonts/Helvetica.ttc',
@@ -61,18 +67,23 @@ def mask(im, shape):
     m = Image.new('L', im.size, 0); ImageDraw.Draw(m).ellipse([0, 0, im.size[0] - 1, im.size[1] - 1], fill=255)
     bg = Image.new('RGB', im.size, '#202020'); bg.paste(im, (0, 0), m); return bg
 def save(im, name, shape): mask(im, shape).save(os.path.join(OUT, f'{name}.{shape}.png'))
+def home(shape, l, alerts=None, pulse=None):
+    im, d = canvas(shape)
+    if pulse: arc(d, pulse, '#%06x' % pulse['color'], pulse['end_angle'])  # under the ring, as on the watch
+    arc(d, l['RING'], C['track'], 270); arc(d, l['RING'], C['green'], l['RING']['start_angle'] + 360 * 0.88)
+    rrect(d, l['DISC'], C['bg']); icon(d, l['SHIELD'])
+    txt(d, l['CLOCK'], '14:32', C['text']); txt(d, l['DATE'], 'Sat, Sep 26', C['muted'])
+    txt(d, l['TITLE'], "You're covered", C['text'])
+    if alerts: txt(d, l['ALERTS'], alerts, C['redSoft'])  # the tally only shows on a day with alerts
+    return im
 
 for shape in ['r', 's']:
-    l = L[f'index.{shape}']; im, d = canvas(shape)
-    arc(d, l['RING'], C['track'], 270); arc(d, l['RING'], C['green'], l['RING']['start_angle'] + 360 * 0.88)
-    rrect(d, l['DISC'], C['bg']); icon(d, l['SHIELD']); txt(d, l['TITLE'], "You're covered", C['text'])
-    txt(d, l['CLOCK'], '14:32', C['muted']); txt(d, l['ALERTS'], '1 alert today · last 9:05', C['redSoft'])
-    save(im, 'home', shape)
-    im, d = canvas(shape)  # DEBUG: the same line for 30 s after a jolt (utils/fall-diagnostics.js), longest case
-    arc(d, l['RING'], C['track'], 270); arc(d, l['RING'], C['green'], l['RING']['start_angle'] + 360 * 0.88)
-    rrect(d, l['DISC'], C['bg']); icon(d, l['SHIELD']); txt(d, l['TITLE'], "You're covered", C['text'])
-    txt(d, l['CLOCK'], '14:32 · 1.00 g', C['muted']); txt(d, l['ALERTS'], 'hit 3.1 g · drop 0.42 g · off wrist', C['caption'])
-    save(im, 'home-debug', shape)
+    l = L[f'index.{shape}']; beep = L[f'pulse.{shape}']; P = L['pulse']
+    save(home(shape, l, pulse=beep[len(beep) // 3]), 'home', shape)
+    save(home(shape, l, alerts='2 alerts today · last 14:32'), 'home-alerts', shape)  # longest likely tally
+    # One PULSE_PERIOD_MS cycle at PULSE_FRAME_MS per frame: the beep, then the pause before the next one.
+    gif = [mask(home(shape, l, pulse=beep[i] if i < len(beep) else None), shape) for i in range(P['periodMs'] // P['frameMs'])]
+    gif[0].save(os.path.join(OUT, f'home-pulse.{shape}.gif'), save_all=True, append_images=gif[1:], duration=P['frameMs'], loop=0)
 
     l = L[f'alert.{shape}']; im, d = canvas(shape)
     for g in l['GLOW']:
@@ -95,7 +106,7 @@ for shape in ['r', 's']:
     # the Watch siren toggle (L['TOGGLE']) stays hidden until SIREN_READY in page/settings.js
     save(im, 'settings', shape)
 
-names = ['home', 'home-debug', 'alert', 'settings']
+names = ['home', 'home-alerts', 'alert', 'settings']
 sheet = Image.new('RGB', (len(names) * 500, 950), '#303030')
 for i, n in enumerate(names):
     sheet.paste(Image.open(os.path.join(OUT, f'{n}.r.png')), (i * 500 + 10, 10))

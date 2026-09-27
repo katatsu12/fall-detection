@@ -16,8 +16,9 @@ This version exists to prove the detector on a real wrist. A detected fall
 opens a "Fall detected" screen that vibrates until you tap OK, or for 30 s
 at most, and then monitoring resumes. Nothing leaves the watch: there is no
 phone-side service and no phone settings page. Home counts the alerts ("2
-alerts today · last 14:32", `utils/alert-log.js`), which is how the test
-below tallies false alarms; the long-press demo doesn't count.
+alerts today · last 14:32", `utils/alert-log.js`; the line appears with the
+day's first alert), which is how the test below tallies false alarms; the
+long-press demo doesn't count.
 
 ### How to prove it
 
@@ -38,17 +39,19 @@ is what tuning `PRESETS` in `utils/fall-detector.js` starts from.
 
 ### If a test fall doesn't alert
 
+Home shows no debug readouts; the numbers are in the Device App log (§5 9d).
+
 1. **Long-press the ring.** If "Fall detected" appears, the alert flow works
    and the detector simply didn't count your fall.
-2. **Check the clock line at rest.** Debug builds show the time and the
-   mean |a| of the last second, for example `3:07 · 1.00 g`. Sitting still it
-   must read about 1.00 g. If it reads about 0.01 g or 10 g, the sensor isn't
-   reporting the documented cm/s², no jolt ever passes a threshold, and no
-   fall can trigger. Report the number instead of tuning.
-3. **Read the line under the title right after a test fall.** For 30 s
-   after any jolt over 1.4 g it shows the strongest one, for example
-   `hit 3.1 g · drop 0.42 g · moved` (`utils/fall-diagnostics.js`). If it
-   still says "No alerts today" right after a fall, no jolt passed 1.4 g.
+2. **Check `[g]` at rest.** Debug builds log one sample's |a| every 5 s, for
+   example `[g] 1.00`. Sitting still it must read about 1.00. If it reads
+   about 0.01 or 10, the sensor isn't reporting the documented cm/s², no
+   jolt ever passes a threshold, and no fall can trigger. Report the number
+   instead of tuning.
+3. **Read the `[diag]` line right after a test fall.** Every jolt over 1.4 g
+   is logged once it settles, for example `[diag] hit 3.1 g · drop 0.42 g ·
+   moved` (`utils/fall-diagnostics.js`). No `[diag]` line after a fall means
+   no jolt passed 1.4 g.
 
 | Last word | Meaning | Try |
 |---|---|---|
@@ -56,12 +59,10 @@ is what tuning `PRESETS` in `utils/fall-detector.js` starts from.
 | no drop | The wrist never fell under the free-fall level before the hit: 0.7 g on *Watchful*, 0.6 g *Balanced*, 0.5 g *Relaxed* | Let yourself drop instead of lowering yourself; compare the drop number with the level |
 | no hit | Free fall seen, but no hit above the impact level within 600 ms: 2.0 g *Watchful*, 2.5 g *Balanced*, 3.0 g *Relaxed* | A mattress softens the hit; compare the hit number with the level |
 | moved | v1 saw the fall, but you moved during the 3 s it waits for stillness | Lie still for 3 s after landing |
-| wait… | Impact seen; the stillness check is still running | Wait 3 s |
 | ALERT | It alerted | — |
 
-Every attempt also goes to the Device App log as `[diag] hit … · drop … ·
-…`, so a series of test falls can be read back in one go. Those numbers
-are what the preset thresholds get tuned from.
+A series of test falls can be read back from the log in one go; those
+numbers are what the preset thresholds get tuned from.
 
 ### Deferred
 
@@ -196,14 +197,16 @@ fall-detection/
 │   ├── monitor-mode.js    # dimming, shared "awake" deadline, dead-man's alarm (§10.5)
 │   ├── raise-detector.js  # raise-to-wake from the accel stream (pure, tested)
 │   ├── alert-log.js       # alert tally for the MVP test (pure, tested)
-│   ├── fall-diagnostics.js # "why didn't it alert?" debug line (pure, tested)
+│   ├── fall-diagnostics.js # "why didn't it alert?" [diag] log line (pure, tested)
+│   ├── pulse.js           # Home's beeping ring: animation frames (pure, tested)
+│   ├── date-text.js       # Home's date line (pure, tested)
 │   ├── theme.js           # palette from the design
 │   └── demo-trace.js      # generated synthetic fall for the debug replay
 ├── tools/render-mocks.py  # layout → PNG mocks (npm run mocks)
 └── test/
     ├── fall-detector.test.js
     ├── raise-detector.test.js
-    ├── alert-log.test.js  fall-diagnostics.test.js
+    ├── alert-log.test.js  fall-diagnostics.test.js  pulse.test.js  date-text.test.js
     └── fixtures/*.json    # recorded accel traces (real falls / ADLs)
 ```
 
@@ -219,7 +222,7 @@ screens return with SOS.
 
 | Screen | Page | What's on it |
 |---|---|---|
-| Home — "You're covered" | `page/index` | Simplified from the design: a single coverage ring with the shield, centred, the state title beneath it (covered / paused / not on wrist) and a clock line above, since in monitor mode this screen *is* the wearer's watch face. The three info rows were dropped on 2026-09-16. For the MVP test a last line counts alerts: "No alerts today" / "2 alerts today · last 14:32". |
+| Home — "You're covered" | `page/index` | Simplified from the design: a single coverage ring with the shield, centred, with the time above it and, beneath it, the date ("Sat, Sep 26") and the state title (covered / paused / not on wrist); in monitor mode this screen *is* the wearer's watch face. The three info rows were dropped on 2026-09-16, and the on-screen debug readouts on 2026-09-26 (they are `[g]` / `[diag]` log lines now). On a day with alerts a red last line counts them for the MVP test: "2 alerts today · last 14:32". While the wearer is covered and the screen is awake, a thin ring beeps out of the coverage ring every 2 s. |
 | Fall detected | `page/alert` | Red glow, "Fall detected", the time, what the detector saw ("peak 3.4 g · 290 ms free fall"), "Vibration stops in 28s", white **OK** pill. Vibrates until OK, 30 s at most. |
 | Sensitivity — "How careful?" | `page/settings` | Relaxed / Balanced / Watchful radio rows (→ `PRESETS.low/normal/high`). Picking one saves it and returns to Home. The *Watch siren* toggle is hidden until alert sound exists. |
 
@@ -253,7 +256,8 @@ Design → Zepp OS mapping:
 | Radial red glow | three translucent `CIRCLE`s (`alpha` 18/22/26); a gradient PNG would be ~900 KB once the build converts it to TGA |
 | White pill / text link | `BUTTON` with `normal_color` white / black |
 | Radio rows, toggle | `FILL_RECT` + `STROKE_RECT` + `CIRCLE`, both states pre-created and swapped with `prop.VISIBLE` |
-| Noto Sans, weights, pulse animation | system font; not reproducible — skipped |
+| Noto Sans, weights | system font; not reproducible — skipped |
+| Pulse animation | `utils/pulse.js`: one `ARC` under the ring, stepped by a 50 ms timer. Every 2 s it grows 20 px, thins and fades. `ARC` has no alpha, so fading scales the colour toward black, which looks the same on a black screen; `IMG_ANIM` frames would be megabytes of TGA. It runs only while covered and awake. |
 | App icon | red disc + white shield (`assets/default.*/icon.png`) |
 
 Palette lives in `utils/theme.js`; per-shape geometry in `page/<page>.{r,s}.layout.js`.
@@ -262,7 +266,8 @@ every page, which covered Home's clock; every page calls `hideStatusBar()`
 (`utils/theme.js`) first thing in `build()`.
 `npm run mocks` renders every screen for both shapes to `tools/mocks/sheet.png`
 straight from the layout files (no simulator needed) — check it after moving
-anything.
+anything. It also writes Home's beep in real time to
+`tools/mocks/home-pulse.{r,s}.gif`.
 
 Not wired yet: alert **sound**. The *Watch siren* toggle is hidden
 (`SIREN_READY = false` in `page/settings.js`) until an audio asset and
@@ -665,9 +670,14 @@ before reading — the viewer buffers.
 
 #### 9e. What to check, in order
 
-1. **It runs.** Open the app on the watch: green ring, "You're covered".
+1. **It runs.** Open the app on the watch: green ring, "You're covered",
+   and a thin ring beeping out of it every 2 s. The beep stops when you
+   pause, take the watch off, or the screen dims.
    The Device App log prints `[rate] NN Hz` every 5 s — that is the real
    `FREQ_MODE_NORMAL` rate on this hardware (README §8, first unknown).
+   It must read the same while the beep runs as after the screen dims. If
+   it drops, the animation is costing samples: raise `PULSE_FRAME_MS` in
+   `utils/pulse.js`.
 2. **Wear gate.** Take the watch off: title → "Not on wrist", ring turns
    red. Put it back.
 3. **Simulate fall.** Long-press the ring: the "Fall detected" page
@@ -893,10 +903,10 @@ nothing here depends on the probe's outcome.
 
 | Piece | Where | How |
 |---|---|---|
-| Black screen | `page/index.js` `tick()`, `utils/monitor-mode.js` `dim()` | 20 s (`AWAKE_MS`) after the last interaction Home sets every widget `VISIBLE: false` — a black OLED draws almost nothing — and lowers brightness to `DIM_BRIGHTNESS` (5) via `setAutoBrightness(false)` + `setBrightness()`. The previous values are saved in memory and in `localStorage` (`display.saved`); `restoreDisplay()` in `onInit` undoes a dim that a crash or kill never got to undo. |
+| Black screen | `page/index.js` `tick()`, `utils/monitor-mode.js` `dim()` | 20 s (`AWAKE_MS`) after the last interaction Home sets every widget `VISIBLE: false` and stops the beep's timer — a black OLED draws almost nothing — and lowers brightness to `DIM_BRIGHTNESS` (5) via `setAutoBrightness(false)` + `setBrightness()`. The previous values are saved in memory and in `localStorage` (`display.saved`); `restoreDisplay()` in `onInit` undoes a dim that a crash or kill never got to undo. |
 | Wake | full-screen black `FILL_RECT` under everything; `utils/raise-detector.js` | A tap anywhere calls `wake()`. Every accelerometer sample also feeds the raise detector: once the watch has been away from face-up (z/‖a‖ < 0.5 for 300 ms) and comes back face-up (≥ 0.8 for 300 ms) the screen wakes — one raise, one wake; a watch lying face-up never fires. `npm test` covers it. |
 | Shared "awake" deadline | `keepAwake()` / `isAwake()` in `getApp().globalData` | Settings is pushed on top of Home, and Home's tick would dim underneath it; Settings bumps the deadline on build and every tap instead of Home needing an `onResume`. |
-| Clock | `L.CLOCK`, `Time.getFormatHour()` | Home is the wearer's screen all day, so it shows the time when awake. |
+| Clock and date | `L.CLOCK`, `L.DATE`, `Time`, `utils/date-text.js` | Home is the wearer's screen all day, so it shows the time and date when awake. Both are redrawn only when their text changes. `Time.getDay()` counts from Monday = 1 and `getMonth()` from January = 1, unlike JavaScript's `Date`. |
 | Dead-man's switch | `armRelaunch()` / `disarmRelaunch()`; `@zos/alarm set({ url: 'page/index', delay: 90, repeat_type: REPEAT_ONCE, param: 'relaunch' })` | Home arms on start and re-arms every 30 s (`REARM_MS`), always setting the new alarm before cancelling the old one. If the wearer presses the side button or the OS kills the page, the pending alarm opens Home ≤ 90 s later and `AUTO_START` resumes monitoring. `openAlert()` disarms first (the alert flow returns by itself); `pause()` — a tap on the ring while awake — is the only user action that disarms. Arming and disarming cancel every alarm the app owns (`getAllAlarms()`): each page is its own bundle, so a Home re-created by `replace()` or a relaunch can't see the alarm id an earlier Home kept, and would otherwise leave it pending. `app.js` logs `app on create invoke "relaunch"` when the alarm was the launcher. |
 
 To verify on hardware (9e-9): that brightness `5` with hidden widgets is
@@ -908,7 +918,7 @@ decides whether this is shippable: **battery over a day** with the sensor at
 detector windows are in ms, `npm test` has a 25 Hz case).
 
 Known trade-offs: the app owns the watch while monitoring (the system watch
-face is not shown; the clock line is the substitute); a palm-over-screen
+face is not shown; the time and date lines are the substitute); a palm-over-screen
 still turns the screen off and the app is killed 10 s later, then relaunched
 by the alarm; a relaunch while the watch is off the wrist (charging) is
 harmless but pointless — pause before charging if it bothers you.
