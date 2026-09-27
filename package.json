@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
     "fixtures": "node test/helpers/make-fixtures.js",
-    "mocks": "python3 tools/render-mocks.py"
+    "mocks": "python3 tools/render-mocks.py",
+    "store": "python3 tools/render-store.py"
   },
   "author": "",
   "license": "ISC",

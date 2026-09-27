@@ -136,7 +136,6 @@ Start/Stop toggle.
 ```json
 "permissions": [
   "device:os.accelerometer",
-  "device:os.gyroscope",
   "device:os.local_storage",
   "device:os.alarm"
 ]
@@ -144,7 +143,9 @@ Start/Stop toggle.
 
 The MVP needs neither `device:os.bg_service` nor `device:os.notification`:
 the background probe that used them (§10) was removed on 2026-09-24. The
-gyroscope permission is kept for detector v2.
+gyroscope permission was dropped for the 1.0 store release (2026-09-27):
+nothing reads the sensor yet, and the store listing and privacy policy
+describe what the app declares. It comes back with the rotation check (§9).
 
 ### 1.5 Toolchain
 
@@ -333,17 +334,16 @@ permissions and naming — it is the file checked in at the repo root.
 {
   "configVersion": "v3",
   "app": {
-    "appId": 27081,
+    "appId": 1128977,
     "appName": "Fall Guard",
     "appType": "app",
     "version": { "code": 1, "name": "1.0.0" },
     "icon": "icon.png",
-    "vender": "zepp",
+    "vender": "activebridge",
     "description": "Detects falls and alerts you with vibration"
   },
   "permissions": [
     "device:os.accelerometer",
-    "device:os.gyroscope",
     "device:os.local_storage",
     "device:os.alarm"
   ],
@@ -362,13 +362,12 @@ permissions and naming — it is the file checked in at the repo root.
     }
   },
   "i18n": { "en-US": { "appName": "Fall Guard" } },
-  "defaultLanguage": "en-US",
-  "debug": true
+  "defaultLanguage": "en-US"
 }
 ```
 
 - `configVersion: "v3"` is the current manifest format.
-- `runtime.apiVersion.minVersion: "3.0"` because Accelerometer / Gyroscope /
+- `runtime.apiVersion.minVersion: "3.0"` because Accelerometer /
   `@zos/alarm` / `requestPermission` all start at API_LEVEL 3.0. Raise `target`
   (and `minVersion`) to 3.6 only if you upgrade `@zeppos/zml` past 0.0.27.
 - `targets.default.platforms` uses the **shape-based** form: `st` is the screen
@@ -769,6 +768,18 @@ Upload through the Zepp developer console, or side-load with `zeus preview`.
 
 ## 9. Next-step ideas
 
+- **Gyroscope rotation check (detector v2).** A real fall turns the whole
+  body; a clap or a hand slammed on a table turns only the hand, briefly. The
+  gate is already in the detector and tested: `minGyroDps` (peak rate around
+  the impact, ~200 dps per §3 "Extras") fed by `pushGyro()`. It is off in
+  every preset and nothing feeds it. To turn it on: start a `Gyroscope`
+  (`@zos/sensor`) beside the accelerometer in `page/index.js` and pass its
+  samples to `detector.pushGyro()`, set `minGyroDps` in `PRESETS`, and add
+  `device:os.gyroscope` back to `app.json` and a line to the store privacy
+  policy. Cost: a gyroscope typically draws several times an accelerometer's
+  power, all day. Decide after the real-watch test ("How to prove it"): only
+  if false alarms exceed 1 a day, and try `useAngle` first (orientation
+  change, accelerometer only, no extra battery).
 - Heart-rate sanity check after impact (available even in app-service).
 - GPS fix from the phone side (`app-side` has access to phone location on some
   Zepp app versions) attached to the SOS payload.

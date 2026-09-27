@@ -1,7 +1,7 @@
 {
   "configVersion": "v3",
   "app": {
-    "appId": 27081,
+    "appId": 1128977,
     "appName": "Fall Guard",
     "appType": "app",
     "version": {
@@ -9,12 +9,11 @@
       "name": "1.0.0"
     },
     "icon": "icon.png",
-    "vender": "zepp",
+    "vender": "activebridge",
     "description": "Detects falls and alerts you with vibration"
   },
   "permissions": [
     "device:os.accelerometer",
-    "device:os.gyroscope",
     "device:os.local_storage",
     "device:os.alarm"
   ],
@@ -53,6 +52,5 @@
       "appName": "Fall Guard"
     }
   },
-  "defaultLanguage": "en-US",
-  "debug": true
+  "defaultLanguage": "en-US"
 }
