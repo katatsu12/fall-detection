@@ -96,6 +96,14 @@ asks `FG_SETTINGS` whenever Fall Guard opens, and takes a pushed
 (`shared/settings.js`). Switched off, a licensed Home behaves like the free one,
 minus the offer.
 
+The same page offers the sensitivity ("How careful?", free for everyone), which
+the watch's own page still sets too. Each pick is stamped with its time on the
+side that made it (`sensitivity` + `sensitivityAt`, in settingsStorage and in
+the watch's `localStorage`) and the later one wins (`mergeSensitivity`): the
+watch adopts a later phone pick when it syncs, and sends its own later pick
+back as `FG_SAVE` (at once from `page/settings.js`, or at the next launch if
+the phone was away). Home picks up the new level in its tick, as before.
+
 Licensing is `amazla/watchplus`, wired the way `amazla/talkie` does it, and
 imported by relative path — the `amazla` repo must be checked out beside this
 one (`~/Documents/zepp_app/amazla`):
@@ -106,9 +114,9 @@ one (`~/Documents/zepp_app/amazla`):
 | Watch licence: cached verdict in `watchplus.json`, one `WP_STATUS` per launch while unlicensed | `app.js`; zml's messaging through `utils/zml-bridge.js` |
 | What Home asks | `utils/pro.js` `licensed()` and `allDayWanted()`, re-checked every tick by `syncAllDay()` in `page/index.js` |
 | "All-day mode" page on the watch ("I've bought it" re-asks the phone) | `page/pro.js` (the library's paywall) |
-| Phone: answers `WP_STATUS` and `FG_SETTINGS`, pushes the switch, activates and revalidates keys | `app-side/index.js` |
-| The switch; buy / paste key / deactivate | `setting/index.js` (Zepp app → Fall Guard) |
-| Watch's copy of the switch | `utils/prefs.js` `allDay`, written by `applyPhoneSettings()` from `app.js` |
+| Phone: answers `WP_STATUS`, `FG_SETTINGS` and `FG_SAVE`, pushes setting changes, activates and revalidates keys | `app-side/index.js` |
+| The switch and the sensitivity; buy / paste key / deactivate | `setting/index.js` (Zepp app → Fall Guard) |
+| Watch's copies | `utils/prefs.js` `allDay`, `sensitivity`, `sensitivityAt`, synced by `applyPhoneSettings()` from `app.js` |
 | Checkout and keys | the Watch+ Worker (`amazla/watchplus/worker`): `PRODUCTS['fall-guard-pro']` → the Creem product, whose return URL is `https://watchplus.ab.team/return` |
 
 `DEBUG` (`utils/debug.js`) unlocks All-day mode without a licence, on the
@@ -117,8 +125,8 @@ purchase. Store builds set it to `false` (the bundler then keeps the locked
 switch, which a debug build drops as dead code), and the purchase is tested on
 that build: buy in the Zepp app, then "I've bought it" on the watch, and Home
 switches without a restart. `npm test` covers the config, which keys unlock,
-the zml bridge (`test/pro.test.js`) and the switch's storage rule
-(`test/settings.test.js`).
+the zml bridge (`test/pro.test.js`), the switch's storage rule and the
+sensitivity merge (`test/settings.test.js`).
 
 ---
 

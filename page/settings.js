@@ -4,7 +4,8 @@
  * behaviour, plus the siren toggle (hidden until sound exists, see
  * SIREN_READY). Persists via utils/prefs; Home (still alive underneath,
  * since this page is pushed) polls the stored value in its tick and
- * rebuilds its detector when it changes.
+ * rebuilds its detector when it changes. The phone settings page offers the
+ * same levels; the later pick wins (shared/settings.js).
  */
 import { back } from '@zos/router'
 import { createWidget, widget, prop, align, event } from '@zos/ui'
@@ -12,7 +13,8 @@ import { getText } from '@zos/i18n'
 import { BasePage } from '@zeppos/zml/base-page'
 import * as L from 'zosLoader:./settings.[pf].layout.js'
 import { COLOR, hideStatusBar } from '../utils/theme'
-import { getPref, setPref, SENSITIVITY } from '../utils/prefs'
+import { getPref, setPref, pickSensitivity, SENSITIVITY } from '../utils/prefs'
+import { FG_SAVE } from '../shared/settings.js'
 import { keepAwake } from '../utils/monitor-mode'
 
 const AWAKE_MS = 20000 // Home is alive underneath and dims when nobody interacts — keep it lit while here
@@ -88,7 +90,14 @@ Page(
       if (s.backTimer) return // already leaving: a second back() would go past Home and close the app
       keepAwake(AWAKE_MS)
       s.sensitivity = id
-      setPref('sensitivity', id)
+      // Stamped, so the later of watch and phone wins, and sent to the phone settings page
+      // if it can hear us; if not, app.js sends it the next time Fall Guard opens.
+      const pick = pickSensitivity(id, Date.now())
+      try {
+        this.request({ method: FG_SAVE, params: pick }).catch(() => {})
+      } catch (e) {
+        console.log('[settings] save to phone failed', e)
+      }
       this.render()
       // From a fresh tick, not from inside the tap's own callback (README Step 5).
       s.backTimer = setTimeout(() => back(), BACK_DELAY_MS)
