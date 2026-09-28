@@ -13,6 +13,14 @@
  * app, or the OS killing it, brings Home back within RELAUNCH_S; only an
  * explicit pause disarms it.
  *
+ * Monitor mode is All-day mode, the Pro feature (utils/pro.js), switched on
+ * and off on the phone settings page. Without it Home is an ordinary page:
+ * the system turns the screen off on its own timer and closes the app about
+ * 10 s later, so detection runs only while it is open. The title says so, and
+ * when it isn't paid for, on a day without alerts, the line under it offers
+ * All-day mode. syncAllDay() re-checks the licence and the switch every tick,
+ * so a purchase made while page/pro is on top takes effect without a restart.
+ *
  * While the wearer is covered and the screen is awake, a thin ring "beeps"
  * out of the coverage ring every PULSE_PERIOD_MS (utils/pulse.js). Its timer
  * only runs then, so a dimmed screen pays nothing for it.
@@ -22,6 +30,7 @@
  *   tap the ring (awake) → pause / resume monitoring
  *   long-press the ring  → replay a synthetic fall (DEBUG only)
  *   swipe up             → sensitivity settings
+ *   tap "Get All-day mode" (free) → page/pro
  *
  * Navigation to/from the alert flow uses replace(), so each page starts
  * fresh and monitoring restarts via AUTO_START when the flow returns here.
@@ -64,9 +73,10 @@ import { addAlert, summarizeAlerts, formatTime } from '../utils/alert-log'
 import { createDiagnostics, diagText } from '../utils/fall-diagnostics'
 import { pulseFrames, PULSE_FRAME_MS, PULSE_FRAMES, PULSE_PERIOD_MS } from '../utils/pulse'
 import { formatDate } from '../utils/date-text'
+import { DEBUG } from '../utils/debug'
+import { licensed, allDayWanted, openPro } from '../utils/pro'
 
 const AUTO_START = true // start monitoring as soon as the page opens
-const DEBUG = true // long-press the ring to simulate a fall; log sample rate
 const FREQ_MODE = FREQ_MODE_NORMAL // README §8: measure the real Hz per mode and revisit
 const KEEP_BRIGHT_MS = 2147483000 // max accepted by setPageBrightTime
 const UI_REFRESH_MS = 1000
@@ -120,12 +130,14 @@ Page(
       pulse: [], // utils/pulse.js: the ARC frames of one beep around the ring
       pulseTimer: null,
       pulseStep: 0,
+      allDay: null, // All-day mode as last applied by syncAllDay(); null until onInit
+      licensed: false, // …and whether it is paid for (switched off on the phone otherwise)
+      upsell: false, // the line under the title offers All-day mode (unlicensed, no alerts today)
       widgets: {},
     },
 
     onInit() {
-      // Come back to this page instead of the watch face when the screen wakes.
-      setWakeUpRelaunch({ relaunch: true })
+      this.syncAllDay()
       restoreDisplay() // a previous run may have died while dimmed
       keepAwake(AWAKE_MS)
       this.state.clock = new Time()
@@ -213,6 +225,7 @@ Page(
         align_h: align.CENTER_H,
         align_v: align.CENTER_V,
       })
+      w.alerts.addEventListener(event.CLICK_UP, () => this.onAlertsLine())
 
       onGesture((g) => {
         keepAwake(AWAKE_MS)
@@ -244,10 +257,50 @@ Page(
       }
     },
 
+    /** The line under the title: alerts today, or (free) the way to All-day mode. */
+    onAlertsLine() {
+      this.wake()
+      if (this.state.upsell) openPro()
+    },
+
+    /**
+     * Apply All-day mode (utils/pro.js) whenever it changes: at init, on every start
+     * and every tick — a purchase, a refund or the phone's switch takes effect without a
+     * restart. Off, Home gives the screen back to the system, which closes the app about
+     * 10 s after the screen goes off; nothing reopens it.
+     */
+    syncAllDay() {
+      const s = this.state
+      s.licensed = licensed()
+      const on = s.licensed && allDayWanted()
+      if (on === s.allDay) return
+      s.allDay = on
+      // Come back to this page instead of the watch face when the screen wakes.
+      setWakeUpRelaunch({ relaunch: on })
+      if (!on) disarmRelaunch() // incl. an alarm a licensed run left pending
+      if (!s.running) return // startMonitoring() applies the rest
+      this.keepAlive(on)
+      if (on) this.rearm(true)
+      else undim()
+    },
+
+    /** All-day mode: keep the page (and therefore the sensor callback) alive — or give that back. */
+    keepAlive(on) {
+      if (on) {
+        keepAwake(AWAKE_MS) // don't go dark the moment it starts
+        setPageBrightTime({ brightTime: KEEP_BRIGHT_MS })
+        pauseDropWristScreenOff({ duration: 0 })
+      } else {
+        resetPageBrightTime()
+        resetDropWristScreenOff()
+      }
+    },
+
     startMonitoring() {
       if (this.state.running) return
       const s = this.state
       this.syncDetector()
+      this.syncAllDay() // a purchase may have landed while paused, when no tick runs
       s.raise.reset()
 
       s.wear = new Wear()
@@ -266,9 +319,7 @@ Page(
       s.accel.setFreqMode(FREQ_MODE)
       s.accel.start()
 
-      // Keep the page (and therefore the sensor callback) alive.
-      setPageBrightTime({ brightTime: KEEP_BRIGHT_MS })
-      pauseDropWristScreenOff({ duration: 0 })
+      if (s.allDay) this.keepAlive(true)
 
       const now = Date.now()
       s.running = true
@@ -277,7 +328,7 @@ Page(
       s.buckets = []
       s.bucket = { startedAt: now, samples: 0, worn: s.worn }
       s.uiTimer = setInterval(() => this.tick(), UI_REFRESH_MS)
-      this.rearm(true)
+      if (s.allDay) this.rearm(true)
       this.render()
     },
 
@@ -303,10 +354,7 @@ Page(
         clearInterval(s.uiTimer)
         s.uiTimer = null
       }
-      if (s.running) {
-        resetPageBrightTime()
-        resetDropWristScreenOff()
-      }
+      if (s.running) this.keepAlive(false)
       undim()
       s.running = false
       s.detector.reset()
@@ -349,7 +397,7 @@ Page(
       if (s.diag) s.diag.push(now, g, before, s.detector.getState())
     },
 
-    /** Once a second: coverage bucket, sample-rate log, settings pickup, dimming, relaunch alarm, ring. */
+    /** Once a second: coverage bucket, sample-rate log, settings and licence pickup, dimming, relaunch alarm, ring. */
     tick() {
       const s = this.state
       if (s.alerting) return
@@ -365,9 +413,12 @@ Page(
         s.samplesSinceLog = 0
         s.lastLogAt = now
       }
-      if (isDimmed() && isAwake()) undim() // Settings (pushed on top) asked for the screen
-      else if (!isDimmed() && !isAwake()) dim()
-      this.rearm(false)
+      this.syncAllDay()
+      if (s.allDay) {
+        if (isDimmed() && isAwake()) undim() // Settings (pushed on top) asked for the screen
+        else if (!isDimmed() && !isAwake()) dim()
+        this.rearm(false)
+      }
       this.render()
     },
 
@@ -425,7 +476,8 @@ Page(
       let title = 'home.paused'
       let ringColor = COLOR.track
       if (s.running) {
-        title = s.worn ? 'home.covered' : 'home.not_worn'
+        // Free: covered only until the system closes the app, and the title must not promise more.
+        title = s.worn ? (s.allDay ? 'home.covered' : 'home.covered_open') : 'home.not_worn'
         ringColor = s.worn ? COLOR.green : COLOR.redSoft
       }
       const clock = this.clockText()
@@ -439,7 +491,11 @@ Page(
         w.date.setProperty(prop.TEXT, date)
       }
       w.title.setProperty(prop.TEXT, getText(title))
-      const line = this.alertsLine()
+      let line = this.alertsLine()
+      // Unlicensed, and no alerts today: the line offers All-day mode instead (tap → page/pro).
+      // Licensed but switched off on the phone: the title alone says so.
+      s.upsell = !s.licensed && !line.text
+      if (s.upsell) line = { text: getText('home.all_day'), color: COLOR.green }
       if (line.text !== s.alertsShown) {
         // setProperty(MORE) redraws the widget, so only when the line changes (a new alert, or midnight)
         s.alertsShown = line.text

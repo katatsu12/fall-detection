@@ -10,6 +10,12 @@ msgstr "Paused"
 msgid "home.not_worn"
 msgstr "Not on wrist"
 
+msgid "home.covered_open"
+msgstr "Covered while open"
+
+msgid "home.all_day"
+msgstr "Get All-day mode →"
+
 msgid "home.date"
 msgstr "{weekday}, {month} {day}"
 
