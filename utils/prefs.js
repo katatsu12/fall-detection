@@ -1,6 +1,7 @@
 /**
  * Device-side preferences, persisted in @zos/storage localStorage and set on
- * the watch's Sensitivity page (page/settings).
+ * the watch's Sensitivity page (page/settings) — except `allDay`, the watch's
+ * copy of the phone settings page's switch (shared/settings.js).
  */
 import { localStorage } from '@zos/storage'
 import { PRESETS } from './fall-detector'
@@ -16,6 +17,7 @@ const PRESET_FOR = {
 const DEFAULTS = Object.freeze({
   sensitivity: SENSITIVITY.BALANCED,
   siren: true,
+  allDay: true, // on until the phone says otherwise, so a purchase switches it on at once
 })
 
 export function getPref(key) {
@@ -31,6 +33,11 @@ export function getPrefs() {
   const out = {}
   for (const k of Object.keys(DEFAULTS)) out[k] = getPref(k)
   return out
+}
+
+/** The phone's settings (shared/settings.js settingsOf), asked for or pushed: keep the watch's copy current. */
+export function applyPhoneSettings(s) {
+  if (s && typeof s.allDay === 'boolean') setPref('allDay', s.allDay)
 }
 
 /** Detector options for the stored sensitivity. */

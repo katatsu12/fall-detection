@@ -15,7 +15,8 @@
   "permissions": [
     "device:os.accelerometer",
     "device:os.local_storage",
-    "device:os.alarm"
+    "device:os.alarm",
+    "data:os.device.info"
   ],
   "runtime": {
     "apiVersion": {
@@ -31,8 +32,15 @@
           "pages": [
             "page/index",
             "page/alert",
-            "page/settings"
+            "page/settings",
+            "page/pro"
           ]
+        },
+        "app-side": {
+          "path": "app-side/index"
+        },
+        "setting": {
+          "path": "setting/index"
         }
       },
       "platforms": [

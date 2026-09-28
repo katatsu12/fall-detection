@@ -14,8 +14,9 @@ wearer taps OK.
 
 This version exists to prove the detector on a real wrist. A detected fall
 opens a "Fall detected" screen that vibrates until you tap OK, or for 30 s
-at most, and then monitoring resumes. Nothing leaves the watch: there is no
-phone-side service and no phone settings page. Home counts the alerts ("2
+at most, and then monitoring resumes. No fall data leaves the watch; the
+phone side and settings page exist only to sell and check All-day mode
+(see "All-day mode is Pro" below). Home counts the alerts ("2
 alerts today · last 14:32", `utils/alert-log.js`; the line appears with the
 day's first alert), which is how the test below tallies false alarms; the
 long-press demo doesn't count.
@@ -75,6 +76,49 @@ numbers are what the preset thresholds get tuned from.
 
 Steps 5–7 and §6 below describe the MVP. Earlier SOS details live in the
 git history.
+
+## All-day mode is Pro (2026-09-27)
+
+Monitor mode (§10.5) is the paid feature, sold as **All-day mode**, $2.99
+once, no trial. Free, Home is an ordinary page: the system turns the screen
+off on its own timer and closes the app about 10 s later, so detection runs
+only while the app is open. Home's title then reads "Covered while open"
+and, on a day without alerts, the line under it offers All-day mode. Fall
+detection, the alert and the sensitivity presets are the same for everyone.
+
+Once paid for, All-day mode has an on/off switch on the phone settings page
+(Zepp app → Fall Guard; locked with a PRO tag until then, and tapping it opens
+the purchase dialog). The phone is the source of truth: settingsStorage key
+`allDay`, `'0'` = off, absent = on. The watch keeps a copy in its own
+`localStorage` (`utils/prefs.js`) so the switch holds while the phone is away,
+asks `FG_SETTINGS` whenever Fall Guard opens, and takes a pushed
+`FG_SETTINGS` call when the switch flips while it is open and connected
+(`shared/settings.js`). Switched off, a licensed Home behaves like the free one,
+minus the offer.
+
+Licensing is `amazla/watchplus`, wired the way `amazla/talkie` does it, and
+imported by relative path — the `amazla` repo must be checked out beside this
+one (`~/Documents/zepp_app/amazla`):
+
+| Piece | Where |
+|---|---|
+| Product, checkout URL, labels | `shared/watchplus-config.js` (`fall-guard-pro`) |
+| Watch licence: cached verdict in `watchplus.json`, one `WP_STATUS` per launch while unlicensed | `app.js`; zml's messaging through `utils/zml-bridge.js` |
+| What Home asks | `utils/pro.js` `licensed()` and `allDayWanted()`, re-checked every tick by `syncAllDay()` in `page/index.js` |
+| "All-day mode" page on the watch ("I've bought it" re-asks the phone) | `page/pro.js` (the library's paywall) |
+| Phone: answers `WP_STATUS` and `FG_SETTINGS`, pushes the switch, activates and revalidates keys | `app-side/index.js` |
+| The switch; buy / paste key / deactivate | `setting/index.js` (Zepp app → Fall Guard) |
+| Watch's copy of the switch | `utils/prefs.js` `allDay`, written by `applyPhoneSettings()` from `app.js` |
+| Checkout and keys | the Watch+ Worker (`amazla/watchplus/worker`): `PRODUCTS['fall-guard-pro']` → the Creem product, whose return URL is `https://watchplus.ab.team/return` |
+
+`DEBUG` (`utils/debug.js`) unlocks All-day mode without a licence, on the
+watch and on the phone's switch, so the real-watch test below needs no
+purchase. Store builds set it to `false` (the bundler then keeps the locked
+switch, which a debug build drops as dead code), and the purchase is tested on
+that build: buy in the Zepp app, then "I've bought it" on the watch, and Home
+switches without a restart. `npm test` covers the config, which keys unlock,
+the zml bridge (`test/pro.test.js`) and the switch's storage rule
+(`test/settings.test.js`).
 
 ---
 
@@ -137,11 +181,14 @@ Start/Stop toggle.
 "permissions": [
   "device:os.accelerometer",
   "device:os.local_storage",
-  "device:os.alarm"
+  "device:os.alarm",
+  "data:os.device.info"
 ]
 ```
 
-The MVP needs neither `device:os.bg_service` nor `device:os.notification`:
+`data:os.device.info` is for the All-day mode page: the library's
+`amazla/pages/ui.js` lays it out from `getDeviceInfo()` (screen size and
+shape). The MVP needs neither `device:os.bg_service` nor `device:os.notification`:
 the background probe that used them (§10) was removed on 2026-09-24. The
 gyroscope permission was dropped for the 1.0 store release (2026-09-27):
 nothing reads the sensor yet, and the store listing and privacy policy
@@ -345,7 +392,8 @@ permissions and naming — it is the file checked in at the repo root.
   "permissions": [
     "device:os.accelerometer",
     "device:os.local_storage",
-    "device:os.alarm"
+    "device:os.alarm",
+    "data:os.device.info"
   ],
   "runtime": {
     "apiVersion": { "compatible": "3.0.0", "target": "3.0.0", "minVersion": "3.0" }
@@ -353,7 +401,9 @@ permissions and naming — it is the file checked in at the repo root.
   "targets": {
     "default": {
       "module": {
-        "page": { "pages": ["page/index", "page/alert", "page/settings"] }
+        "page": { "pages": ["page/index", "page/alert", "page/settings", "page/pro"] },
+        "app-side": { "path": "app-side/index" },
+        "setting": { "path": "setting/index" }
       },
       "platforms": [
         { "st": "r", "dw": 480 },
@@ -910,7 +960,9 @@ Results (fill in):
 
 Since the platform answer is "foreground only", the foreground is made to
 behave like a background service. All of it is documented page-level API;
-nothing here depends on the probe's outcome.
+nothing here depends on the probe's outcome. Since 2026-09-27 this is the
+paid **All-day mode**: everything in the table below applies only when
+`utils/pro.js` `allDay()` says so (see "All-day mode is Pro").
 
 | Piece | Where | How |
 |---|---|---|
